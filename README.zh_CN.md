@@ -1,0 +1,97 @@
+<p align="right"><strong>简体中文</strong> · <a href="README.md">English</a></p>
+
+# Tachi Badge
+
+把 [tachi](https://github.com/monsterxx03/tachi) 的「等一下」搬到 AI Passport 这块小屏上。
+
+## 它解决什么
+
+tachi 干活时会停下来等人两次：一次是它要执行一条被判为「需要确认」的命令，一次是它有个
+问题要问你。这两种等待平时只出现在电脑屏幕上——人一旦离开电脑就看不见了。
+
+这个固件让 AI Passport（240×320 的小屏 + 三枚按键）成为那个等待的第二个入口：屏幕告诉你
+「谁在等你、等什么」，按键替你把决定送回去。
+
+## 三块屏
+
+| 屏 | 什么时候出现 | 能做什么 |
+| --- | --- | --- |
+| 状态屏 | 平时 | 看谁在跑、跑到哪一步、连没连上电脑、电量 |
+| 确认屏 | 有一条命令要放行 | 看命令预览，选「允许一次 / 本会话允许 / 拒绝」 |
+| 问答屏 | 模型提了问题 | 选项列表，支持多选 |
+
+按键：上/下移动，确定提交。多选的问题用确定切换勾选、长按提交；单选时长按退回上一题。
+
+## 它怎么和电脑说话
+
+一条 USB 串口（设备侧是 ESP32-C3 的 USB-Serial-JTAG），行分隔 JSON，每行以 `@@` 开头。
+
+前缀不是洁癖：设备的控制台日志和协议共用同一条线，前缀是唯一能把两者分开的东西——
+设备启动时那几行 `I (156) esp_image: ...` 和 `@@{"t":"hello"...}` 就是交错在一起的。
+
+协议的另一半在 tachi 仓库：`desktop/link/link.go`；设计说明在
+`docs/2026-09-28-agent-badge-link-design.md`（那份文档记录了这个东西为什么长这样，
+以及本地实测到的几个约束）。
+
+## 构建
+
+需要 ESP-IDF 5.5.3。
+
+```bash
+. ~/esp/esp-idf-v5.5.3/export.sh
+idf.py build
+idf.py -p /dev/cu.usbmodem2101 flash
+```
+
+### 头像也要先生成
+
+状态屏中间是 tachi 的头像（不再是那个占位色的圆），它同样是从 tachi 的 app 图标
+切出来的生成物，不进仓库：
+
+```bash
+uv run tools/mk_badge_avatar.py        # 依赖写在脚本里，uv 自己准备环境
+```
+
+默认读 `~/repos/tachi/desktop/build/appicon.png`，用 `BADGE_AVATAR_SRC` 可以改。
+换头像只改这一处：脚本会裁白边、缩到 120×120、把圆外涂成屏幕底色。
+
+### 中文字体要先生成
+
+界面里的中文来自 tachi（会话标题、命令预览、模型提的问题），所以字体得覆盖**任意**常用
+汉字——LVGL 内置的那个 CJK 子集小到连「脑」「还」「连」都不含，缺一个字就是一个方框。
+
+字体是生成物，不进仓库：它从本机字体切出来，而 macOS 自带中文字体的授权不允许再分发
+（而且源码文本有 15MB）。第一次构建前跑一次：
+
+```bash
+./tools/gen_badge_font.sh          # 默认用 /Library/Fonts/Arial Unicode.ttf
+```
+
+要对外发布时，把它指向一份 OFL 字体（思源黑体 / Noto Sans SC）即可，脚本其余部分不用动；
+那时再把产物连同来源与授权一起提交。
+
+## 目录
+
+```
+main/badge_proto.c    协议：一行 JSON 的解析与编解码（纯逻辑，主机上可测）
+main/badge_json.c     上面那层用的极简 JSON 读写（零依赖、无动态分配）
+main/badge_link.c     串口收发：分帧、只认带 @@ 的行
+main/badge_state.c    状态机：收到什么、按键该发什么（纯逻辑，主机上可测）
+main/badge_ui.c       三块屏（自己的界面，不是基线的 demo 菜单外壳）
+main/main.c           入口：初始化、事件循环、心跳与超时
+tests/test_badge_*.c  上面那些纯逻辑部分的单元测试（`./tools/validate.sh --static` 会跑）
+```
+
+## 已知约束
+
+- **LVGL 的字体位图索引默认只有 20 位（1MB）**。这份字体有两万多个字形，超过上限，
+  所以 `sdkconfig.defaults` 里开了 `CONFIG_LV_FONT_FMT_TXT_LARGE`。不开的话编译会报
+  `-Woverflow`，索引被截断成低 20 位、字体表全乱——看起来像是字体生成错了。
+- **改 `sdkconfig.defaults` 后必须删掉 `sdkconfig`** 再构建：defaults 只在生成配置时生效，
+  已存在的 `sdkconfig` 不会跟着变。
+- **生成字体时必须加 `--no-compress`**。`lv_font_conv` 默认给位图做 RLE 压缩并在描述符里
+  写 `bitmap_format = 1`，而那个格式是 LVGL 8 时代的，LVGL 9.5 解不出来。它的表现极具
+  欺骗性：字形查得到、边界框尺寸也对，但屏幕上什么都不画；换成内置字体又一切正常。
+  于是很容易误判成「字体太大」「内存不够」或「渲染层坏了」。
+  （`tools/gen_badge_font.sh` 已经带上了这个参数。）
+- 串口是独占的：这个固件跑着的时候，`idf.py monitor` 打不开同一个口。

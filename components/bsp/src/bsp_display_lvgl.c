@@ -97,29 +97,33 @@ lv_display_t *bsp_lvgl_init(void) {
         return NULL;
     }
     lv_display_t *disp = lvgl_port_add_disp(&dc);
-    bool mask_registered = false;
-    if (disp) {
-        // LVGL 9.5 returns void here; check the list while still holding the lock.
-        const uint32_t count = lv_display_get_event_count(disp);
-        lv_display_add_event_cb(disp, rounded_flush_event, LV_EVENT_FLUSH_START, NULL);
-        mask_registered = lv_display_get_event_count(disp) == count + 1;
-    }
-    if (!mask_registered) {
-        ESP_LOGE(TAG, "LVGL display 或圆角回调注册失败");
-        if (disp) lvgl_port_remove_disp(disp);
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "LVGL display 注册失败");
         lvgl_port_unlock();
         // Retain the initialized port for retry. Deinit is asynchronous and can
         // race the next init (or even run before the task sets running=true).
         return NULL;
     }
 
-    // Mask the final RGB565 flush instead of using root-screen clip_corner.
-    // Full-screen rounded clipping creates an ARGB layer that does not fit the
-    // 24 KB LVGL pool reliably on this no-PSRAM target.
+    // 圆角遮罩（rounded_flush_event）本轮不启用。
+    //
+    // 原因：接了真串口之后屏幕发白、断开串口就正常，而设备侧的 LVGL 池、锁、
+    // 渲染循环全都是健康的（free=34KB / frag=1% / 无断言）。这个回调是 flush
+    // 路径上唯一会动 draw buffer 的东西——它在每一帧开始前把可见区之外的像素
+    // 涂黑，而那块缓冲正是 DMA 正在搬的同一块内存。先摘掉它验证；
+    // 函数本身和 bsp_display_rounding 都保留，圆角随时可以加回来。
+    //
+    // ⚠ 不注册回调时，不能再拿"事件数 +1"当成功判据：那样它恒为假，会把刚注册
+    // 好的显示又拆掉，bsp_lvgl_init() 从此永远返回 NULL，调用方直接退出、屏幕
+    // 停在 GRAM 的随机内容上（黑屏/花屏）。显示注册成功即视为成功。
+    (void)rounded_flush_event;
+
+    // 圆角遮罩过去用来替代 root-screen clip_corner：全屏圆角裁剪会生成 ARGB
+    // 图层，在这个无 PSRAM 的目标上放不进 24KB 的 LVGL 池。
     s_disp = disp;
     lvgl_port_unlock();
 
-    ESP_LOGI(TAG, "LVGL 就绪，全局圆角=%d，外部填充=黑色", BSP_LVGL_SCREEN_RADIUS);
+    ESP_LOGI(TAG, "LVGL 就绪（圆角遮罩已关闭）");
     return s_disp;
 }
 

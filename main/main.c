@@ -1,242 +1,401 @@
-// main/main.c —— FoloToy AI Passport BSP 驱动参考示例:初始化 + 菜单 + 按键分发。
+// Tachi Badge —— 把 tachi 的「等一下」搬到这块小屏上的设备侧。
 //
-// 按键语义(全局统一):
-//   上/下 短按   菜单中=移动选中项;演示页中=该页自定义
-//   确定  短按   菜单中=进入选中项;演示页中=该页自定义
-//   确定  长按   演示页中=返回菜单(由本文件统一拦截)
-#include "bsp_i2c.h"
-#include "bsp_display.h"
-#include "bsp_button.h"
-#include "bsp_audio.h"
-#include "bsp_battery.h"
-#include "bsp_pins.h"      // 错误日志里要打印 BSP_LCD_* 引脚号
-#include "demo.h"
-#include "demo_navigation.h"
-#include "ui_pixel.h"
-#include "lvgl.h"
+// 这是一个二次开发应用，不是基线 demo：它没有菜单，也不进任何 demo_* 测试页，
+// 启动后直接进自己的界面（见 badge_ui）。协议的另一半在 tachi 仓库的
+// desktop/link/link.go，一份设计说明在 docs/2026-09-28-agent-badge-link-design.md。
+//
+// 线程模型（这块板只有一个核，所以「谁碰什么」必须写清楚）：
+//
+//   link 任务   →  只读串口、按行分帧、把行丢进队列
+//   按键回调    →  只把一次按键丢进队列（回调跑在共享定时器任务上，不能做重活）
+//   app 任务    →  取行/取按键、跑状态机、发回答、持 LVGL 锁渲染
+//
+// 只有 app 任务碰状态机与界面，所以除了 LVGL 锁之外没有别的并发要说。
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "esp_err.h"
 #include "esp_log.h"
-#include "esp_sleep.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "nvs_flash.h"
 
-static const char *TAG = "main";
+#include "badge_link.h"
+#include "badge_proto.h"
+#include "badge_state.h"
+#include "badge_ui.h"
+#include "bsp_battery.h"
+#include "bsp_button.h"
+#include "bsp_display.h"
+#include "bsp_i2c.h"
+#include "lvgl.h"
+#include "bsp_pins.h"
 
-static const demo_entry_t DEMOS[] = {
-    { .name = "Display", .enter = demo_display_enter, .exit = demo_display_exit,
-      .key = demo_display_key },
-    { .name = "Button", .enter = demo_button_enter, .exit = demo_button_exit,
-      .key = demo_button_key },
-    { .name = "Audio", .enter = demo_audio_enter, .exit = demo_audio_exit,
-      .key = demo_audio_key, .start = demo_audio_start, .stop = demo_audio_stop },
-    { .name = "Battery", .enter = demo_battery_enter, .exit = demo_battery_exit,
-      .key = demo_battery_key },
-    { .name = "Wi-Fi", .enter = demo_wifi_enter, .exit = demo_wifi_exit,
-      .key = demo_wifi_key, .start = demo_wifi_start, .stop = demo_wifi_stop },
-    { .name = "BLE", .enter = demo_ble_enter, .exit = demo_ble_exit,
-      .key = demo_ble_key, .start = demo_ble_start, .stop = demo_ble_stop },
-    { .name = "Low Power", .enter = demo_low_power_enter, .exit = demo_low_power_exit,
-      .key = demo_low_power_key, .start = demo_low_power_start, .stop = demo_low_power_stop },
-};
-#define DEMO_COUNT (sizeof(DEMOS) / sizeof(DEMOS[0]))
-#define INPUT_QUEUE_DEPTH 8
+static const char *TAG = "badge";
+
+#define BADGE_FIRMWARE "0.1.0"
+
+#define BADGE_APP_STACK 8192U
+#define BADGE_APP_PRIORITY 5U
+#define BADGE_APP_TICK_MS 100U
+
+// 一条入站协议行的上限。它必须容得下**一次问多个问题**的那一整行：三个问题、
+// 每个带若干选项，实测能到 2KB 出头。原先定 1024，正好卡在「两个问题」的边缘——
+// 超了是被整行丢掉的，而丢掉是静默的，于是设备上看起来像没收到。
+//
+// 与 badge_link 的 BADGE_LINK_LINE_MAX 保持一致：两处不一致时，瓶颈永远在小的那个，
+// 而它藏在一个完全不同的文件里。
+#define BADGE_LINE_MAX 4096U
+// 队列深度 2 足够：app 任务每 100ms 就取走一条，而 4096 每条的内存代价不小。
+#define BADGE_LINE_QUEUE_DEPTH 2U
+#define BADGE_KEY_QUEUE_DEPTH 8U
+
+#define BADGE_BATTERY_SAMPLE_MS 10000U
+// 心跳：定期向主机要一次全量。它同时解决两件事——主机换了一次连接、或者我们
+// 错过了什么，都能自己补回来；而「多久没收到东西」也就是链路是否还活着的判据。
+#define BADGE_HEARTBEAT_MS 10000U
+#define BADGE_LINK_TIMEOUT_MS 30000U
 
 typedef struct {
-    bsp_btn_t btn;
-    bsp_btn_ev_t event;
-} input_event_t;
+    char text[BADGE_LINE_MAX];
+    size_t length;
+} badge_line_t;
 
-// 各外设初始化结果:失败的项在菜单里标 [FAIL] 且不允许进入。
-static bool s_ok[DEMO_COUNT];
+// 按键从回调到 app 任务只走一个值：按键回调跑在共享定时器任务上，那里不能
+// 访问 LVGL，也不该做任何判断以外的事。
+typedef struct {
+    badge_key_t key;
+} badge_key_event_t;
 
-static lv_obj_t *s_menu_scr;
-static lv_obj_t *s_cards[DEMO_COUNT];
-static lv_obj_t *s_rows[DEMO_COUNT];
-static lv_obj_t *s_mascot;
-static demo_navigation_t s_navigation;
-static QueueHandle_t s_input_queue;
-static TaskHandle_t s_input_task;
-static volatile bool s_input_ready;
+static QueueHandle_t s_line_queue;
+static QueueHandle_t s_key_queue;
 
-static void menu_refresh(void) {
-    for (size_t i = 0; i < DEMO_COUNT; i++) {
-        lv_label_set_text_fmt(s_rows[i], "%s%s",
-                              DEMOS[i].name,
-                              s_ok[i] ? "" : "  [FAIL]");
-        ui_pixel_set_selected(s_cards[i], i == s_navigation.selected, s_ok[i]);
-        lv_obj_set_style_text_color(s_rows[i],
-            s_ok[i] ? lv_color_hex(UI_INK) : lv_color_hex(0x7A2020), 0);
-    }
+// 状态机与消息结构都有几 KB，任务栈放不下，放静态区。
+static badge_state_t s_state;
+static badge_msg_t s_message;
+static badge_ui_snapshot_t s_snapshot;
+
+static int s_battery_percent = -1;
+static uint32_t s_last_message_ms;
+
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-static void menu_build(void) {
-    s_menu_scr = ui_pixel_screen_create("FoloToy");
+static void on_line(const char *line, size_t length, void *context)
+{
+    // ⚠ 必须 static：badge_line_t 里带着 BADGE_LINE_MAX（4096）字节的行缓冲，而本
+    // 回调跑在 badge_link 任务上，那个任务的栈只有 4096 字节——放在栈上等于一个
+    // 局部变量占满整个栈。表现是「主机一发消息，设备立刻 panic 重启」
+    // （Guru Meditation: Stack protection fault），屏幕上则是一秒一闪的白屏：
+    // 每次重启都会白一下。回调只由 badge_link 任务同步调用（链路是独占的），复用
+    // 这一份缓冲是安全的。
+    static badge_line_t item;
 
-    for (size_t i = 0; i < DEMO_COUNT; i++) {
-        int x = 11 + (int)(i % 2) * 112;
-        int y = 52 + (int)(i / 2) * 47;
-        s_cards[i] = ui_pixel_panel_create(s_menu_scr, x, y, 102, 40, UI_PAPER);
-        s_rows[i] = lv_label_create(s_cards[i]);
-        lv_obj_set_style_text_font(s_rows[i], &lv_font_montserrat_14, 0);
-        lv_obj_set_style_text_align(s_rows[i], LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(s_rows[i]);
-    }
-
-    s_mascot = ui_pixel_mascot_create(s_menu_scr, 101, 242);
-
-    menu_refresh();
-    lv_screen_load(s_menu_scr);
-}
-
-static void enter_menu(void) {
-    menu_build();
-}
-
-static demo_nav_input_t navigation_input(bsp_btn_t btn, bsp_btn_ev_t event) {
-    if (event == BSP_BTN_LONG && btn == BSP_BTN_OK) return DEMO_NAV_INPUT_OK_LONG;
-    if (event != BSP_BTN_CLICK) return DEMO_NAV_INPUT_OTHER;
-    if (btn == BSP_BTN_UP) return DEMO_NAV_INPUT_UP_CLICK;
-    if (btn == BSP_BTN_DOWN) return DEMO_NAV_INPUT_DOWN_CLICK;
-    if (btn == BSP_BTN_OK) return DEMO_NAV_INPUT_OK_CLICK;
-    return DEMO_NAV_INPUT_OTHER;
-}
-
-static void process_input(const input_event_t *input) {
-    demo_nav_input_t nav_input = navigation_input(input->btn, input->event);
-
-    if (s_navigation.active >= 0) {
-        demo_nav_result_t result = demo_navigation_handle(&s_navigation, nav_input, true);
-        const demo_entry_t *demo = &DEMOS[result.index];
-        if (result.action == DEMO_NAV_ACTION_EXIT) {
-            esp_err_t e = demo->stop ? demo->stop() : ESP_OK;
-            if (e != ESP_OK) {
-                ESP_LOGE(TAG, "%s 页面停止失败: %s", demo->name, esp_err_to_name(e));
-                return;
-            }
-            if (!bsp_lvgl_lock(500)) return;
-            demo->exit();
-            demo_navigation_complete_exit(&s_navigation);
-            enter_menu();
-            bsp_lvgl_unlock();
-        } else if (result.action == DEMO_NAV_ACTION_FORWARD) {
-            demo->key(input->btn, input->event);
-        }
+    (void)context;
+    ESP_LOGD(TAG, "rx %u bytes: %.48s", (unsigned)length, line);
+    if (length >= BADGE_LINE_MAX) {
+        // 丢掉也要说一声：静默丢弃正是「设备看起来没收到」的成因，
+        // 而排查的人手里只有一行「什么都没有」。
+        ESP_LOGW(TAG, "rx dropped: %u bytes exceeds %u", (unsigned)length,
+                 (unsigned)BADGE_LINE_MAX);
         return;
     }
+    memcpy(item.text, line, length);
+    item.text[length] = '\0';
+    item.length = length;
+    // 队列满就丢最新的：app 任务总会再向主机要一次全量（心跳），
+    // 让队列里的旧消息排队等待的价值不大。
+    (void)xQueueSend(s_line_queue, &item, 0);
+}
 
-    if (nav_input == DEMO_NAV_INPUT_OTHER || nav_input == DEMO_NAV_INPUT_OK_LONG) return;
-    if (!bsp_lvgl_lock(500)) return;
-    demo_nav_result_t result = demo_navigation_handle(
-        &s_navigation, nav_input, s_ok[s_navigation.selected]);
-    if (result.action == DEMO_NAV_ACTION_REFRESH) {
-        menu_refresh();
-        ui_pixel_mascot_jump(s_mascot);
-    } else if (result.action == DEMO_NAV_ACTION_ENTER) {
-        const demo_entry_t *demo = &DEMOS[result.index];
-        ui_pixel_mascot_jump(s_mascot);
-        lv_obj_delete(s_menu_scr);
-        s_menu_scr = NULL;
-        s_mascot = NULL;
-        demo->enter();
-        bsp_lvgl_unlock();
+static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
+{
+    badge_key_event_t queued;
 
-        esp_err_t e = demo->start ? demo->start() : ESP_OK;
-        if (e != ESP_OK) {
-            ESP_LOGE(TAG, "%s 页面启动失败: %s", demo->name, esp_err_to_name(e));
+    (void)context;
+    switch (button) {
+    case BSP_BTN_UP:
+        if (event != BSP_BTN_CLICK) {
+            return;
         }
+        queued.key = BADGE_KEY_UP;
+        break;
+    case BSP_BTN_DOWN:
+        if (event != BSP_BTN_CLICK) {
+            return;
+        }
+        queued.key = BADGE_KEY_DOWN;
+        break;
+    case BSP_BTN_OK:
+        if (event == BSP_BTN_CLICK) {
+            queued.key = BADGE_KEY_OK;
+        } else if (event == BSP_BTN_LONG) {
+            queued.key = BADGE_KEY_BACK;
+        } else {
+            return;
+        }
+        break;
+    default:
         return;
     }
+    (void)xQueueSend(s_key_queue, &queued, 0);
+}
+
+static void render(void)
+{
+    badge_state_to_ui(&s_state, &s_snapshot);
+    s_snapshot.battery_percent = s_battery_percent;
+
+    // LVGL 不是线程安全的：这一屏的每一次修改都要在锁里。拿不到锁就跳过这一帧，
+    // 下一轮再画——为了一帧画面去等，会把按键的响应一起拖住。
+    ESP_LOGD(TAG, "render: view=%d connected=%d ask=%u sel=%u notice=%s",
+             (int)s_snapshot.view, (int)s_snapshot.connected,
+             (unsigned)s_state.ask_count, (unsigned)s_snapshot.selection,
+             s_snapshot.notice != NULL ? s_snapshot.notice : "-");
+    // 偶发地报一次 LVGL 池的状态。池耗尽或碎片严重时屏幕上会是白的，而设备本身
+    // 还在正常收发协议——从外面看和「屏幕坏了」一模一样，所以留一条线索。默认
+    // 等级下不可见，排查时把它调到 DEBUG 就能看到。
+    {
+        static uint32_t last_report;
+        uint32_t now = now_ms();
+
+        if (now - last_report >= 3000U) {
+            lv_mem_monitor_t mon;
+
+            last_report = now;
+            lv_mem_monitor(&mon);
+            ESP_LOGD(TAG, "lvgl: free=%u max_free=%u frag=%u%% used=%u%%",
+                     (unsigned)mon.free_size, (unsigned)mon.free_biggest_size,
+                     (unsigned)mon.frag_pct, (unsigned)mon.used_pct);
+        }
+    }
+    if (!bsp_lvgl_lock(200)) {
+        ESP_LOGW(TAG, "lvgl lock timeout — skipping this frame");
+        return;
+    }
+    badge_ui_render(&s_snapshot);
     bsp_lvgl_unlock();
 }
 
-static void input_task(void *arg) {
-    (void)arg;
-    input_event_t input;
-    for (;;) {
-        if (xQueueReceive(s_input_queue, &input, portMAX_DELAY) == pdTRUE) {
-            process_input(&input);
-        }
+static bool send_line(const char *text, size_t length)
+{
+    if (length == 0U || !badge_link_send(text, length)) {
+        ESP_LOGW(TAG, "tx failed (%u bytes)", (unsigned)length);
+        return false;
+    }
+    // 发送也要留痕：排查「按了没反应」时，第一个要回答的问题就是「到底发出去了没」，
+    // 而没有这行日志时它和「发出了但主机没答」看起来一模一样。
+    ESP_LOGD(TAG, "tx %u bytes: %.64s", (unsigned)length, text);
+    return true;
+}
+
+static void send_hello(void)
+{
+    char buffer[128];
+    size_t length = badge_proto_hello(buffer, sizeof(buffer), BADGE_FIRMWARE);
+
+    if (length > 0U) {
+        (void)send_line(buffer, length);
     }
 }
 
-static esp_err_t input_dispatch_init(void) {
-    s_input_queue = xQueueCreate(INPUT_QUEUE_DEPTH, sizeof(input_event_t));
-    if (!s_input_queue) return ESP_ERR_NO_MEM;
-    if (xTaskCreate(input_task, "demo_input", 4096, NULL, 5, &s_input_task) != pdPASS) {
-        vQueueDelete(s_input_queue);
-        s_input_queue = NULL;
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
-}
+static void send_heartbeat(void)
+{
+    char buffer[64];
+    size_t length = badge_proto_sync(buffer, sizeof(buffer), 0UL);
 
-static void input_dispatch_deinit(void) {
-    s_input_ready = false;
-    if (s_input_task) {
-        vTaskDelete(s_input_task);
-        s_input_task = NULL;
-    }
-    if (s_input_queue) {
-        vQueueDelete(s_input_queue);
-        s_input_queue = NULL;
+    if (length > 0U) {
+        (void)send_line(buffer, length);
     }
 }
 
-// button callbacks run on the shared esp_timer task; enqueue only and return immediately.
-static void on_key(bsp_btn_t btn, bsp_btn_ev_t ev, void *user) {
-    (void)user;
-    if (!s_input_ready || !s_input_queue) return;
-    const input_event_t input = { .btn = btn, .event = ev };
-    (void)xQueueSend(s_input_queue, &input, 0);
+static bool handle_line(const badge_line_t *line)
+{
+    bool was_connected = s_state.connected;
+
+    if (!badge_proto_parse(line->text, line->length, &s_message)) {
+        ESP_LOGW(TAG, "unparsed line: %.64s", line->text);
+        return false; // 不是我们认识的消息：丢掉
+    }
+    s_last_message_ms = now_ms();
+    if (!was_connected) {
+        // 第一次收到东西就是「连上了」——之后靠超时判断它是否还在。
+        badge_state_set_connected(&s_state, true);
+    }
+    // 连接后的第一条消息也要 APPLY，不能只标记连接就返回。早先就是那么写的，
+    // 于是重连后的第一条（可能正是一条 ask）被吞掉：屏幕停在「等电脑」，而主机
+    // 那边看起来一切正常——它确实发出去了，设备也确实收到了。
+    return badge_state_apply(&s_state, &s_message) || !was_connected;
 }
 
-void app_main(void) {
-    ESP_LOGI(TAG, "FoloToy AI Passport BSP demo 启动");
-    esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
-    if (wakeup != ESP_SLEEP_WAKEUP_UNDEFINED) {
-        ESP_LOGI(TAG, "休眠唤醒原因: %d", wakeup);
-    }
+static void handle_key(const badge_key_event_t *event)
+{
+    char payload[512];
+    size_t length = 0;
 
-    bsp_i2c_init();
-    bsp_i2c_scan();
-
-    // 屏幕是本 demo 的 UI 载体,失败就没有菜单可言 —— 打清楚日志后退出,
-    // 不做"串口菜单"降级(那会让本文件复杂一倍,违背参考示例的初衷)。
-    if (bsp_display_init() != ESP_OK || !bsp_lvgl_init()) {
-        ESP_LOGE(TAG, "显示/LVGL 初始化失败,demo 无法继续。"
-                      "检查 SPI 接线(MOSI=%d SCLK=%d CS=%d DC=%d BL=%d)",
-                 BSP_LCD_MOSI, BSP_LCD_SCLK, BSP_LCD_CS, BSP_LCD_DC, BSP_LCD_BL);
+    if (!badge_state_key(&s_state, event->key, payload, sizeof(payload), &length)) {
         return;
     }
-    bsp_display_backlight(100);
-
-    demo_navigation_init(&s_navigation, DEMO_COUNT);
-
-    // 其余外设单项失败不阻塞:菜单里标 [FAIL],其他项照常可测。
-    s_ok[0] = true;                                   // Display 已确认可用
-    esp_err_t input_err = input_dispatch_init();
-    esp_err_t button_err = input_err == ESP_OK
-                         ? bsp_button_init(on_key, NULL)
-                         : ESP_ERR_INVALID_STATE;
-    s_ok[1] = input_err == ESP_OK && button_err == ESP_OK;
-    if (input_err != ESP_OK) {
-        ESP_LOGE(TAG, "按键事件任务创建失败: %s", esp_err_to_name(input_err));
-    } else if (button_err != ESP_OK) {
-        ESP_LOGE(TAG, "按键初始化失败: %s", esp_err_to_name(button_err));
-        input_dispatch_deinit();
+    // 按下之后屏幕上必须有动静：这个答案要等主机回一条 ask_gone 才会撤下待答屏，
+    // 中间那段时间里如果界面完全静止，用户会以为按键坏了。
+    if (send_line(payload, length)) {
+        badge_state_notice(&s_state, "已发送", 2500U);
+    } else {
+        badge_state_notice(&s_state, "发送失败", 4000U);
     }
-    s_ok[2] = (bsp_audio_init() == ESP_OK);
-    s_ok[3] = (bsp_battery_init() == ESP_OK);
-    s_ok[4] = true;                                    // 页面内按需初始化并显示错误
-    s_ok[5] = true;
-    s_ok[6] = true;
+}
 
+static esp_err_t nvs_init(void)
+{
+    esp_err_t err = nvs_flash_init();
+
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        err = nvs_flash_erase();
+        if (err == ESP_OK) {
+            err = nvs_flash_init();
+        }
+    }
+    return err;
+}
+
+static void badge_task(void *argument)
+{
+    uint32_t last_battery_ms = 0;
+    uint32_t last_heartbeat_ms = 0;
+
+    (void)argument;
+    for (;;) {
+        // 同 on_line：badge_line_t 是 4KB 级的结构，不该待在栈上。这个任务的栈
+        // 是 8192，放得下，但剩下的余量要留给解析逻辑，不留这个隐患。
+        static badge_line_t line;
+        badge_key_event_t key;
+        bool dirty = false;
+        uint32_t now = now_ms();
+
+        if (xQueueReceive(s_line_queue, &line, 0) == pdTRUE) {
+            dirty = handle_line(&line) || dirty;
+        }
+        while (xQueueReceive(s_key_queue, &key, 0) == pdTRUE) {
+            handle_key(&key);
+            dirty = true;
+        }
+
+        if (now - last_battery_ms >= BADGE_BATTERY_SAMPLE_MS) {
+            int percent = bsp_battery_soc();
+
+            last_battery_ms = now;
+            if (percent != s_battery_percent) {
+                s_battery_percent = percent < 0 ? -1 : percent;
+                dirty = true;
+            }
+        }
+        if (now - last_heartbeat_ms >= BADGE_HEARTBEAT_MS) {
+            last_heartbeat_ms = now;
+            send_heartbeat();
+        }
+        // 取时间之前必须重新读一次时钟：上面处理消息时刚把 s_last_message_ms 更新成
+        // 「比 now 更晚」的时刻，用它去减会得到一个负数——uint32 下溢成 40 亿，
+        // 于是每收到一条消息的同一轮就立刻被判成超时，连接状态永远是断的。
+        now = now_ms();
+        if (s_state.connected && now - s_last_message_ms >= BADGE_LINK_TIMEOUT_MS) {
+            // 主机那边断了（拔线、tachi 关了）：屏幕上必须说清楚，否则「空闲」
+            // 会被读成「agent 没在干活」。
+            badge_state_set_connected(&s_state, false);
+            dirty = true;
+        }
+        // 推进状态机自己的时钟：一次性提示（「已发送」）靠它过期。传 0 会让提示
+        // 永远挂在那里——那是这个 tick 存在的唯一理由。
+        if (badge_state_tick(&s_state, BADGE_APP_TICK_MS)) {
+            dirty = true;
+        }
+        if (dirty) {
+            render();
+        }
+        vTaskDelay(pdMS_TO_TICKS(BADGE_APP_TICK_MS));
+    }
+}
+
+void app_main(void)
+{
+    BaseType_t created;
+
+    ESP_LOGI(TAG, "Tachi Badge %s starting", BADGE_FIRMWARE);
+
+    if (nvs_init() != ESP_OK) {
+        ESP_LOGE(TAG, "NVS initialization failed");
+        return;
+    }
+    if (bsp_i2c_init() != ESP_OK) {
+        ESP_LOGW(TAG, "I2C initialization failed");
+    }
+    if (bsp_display_init() != ESP_OK || bsp_lvgl_init() == NULL) {
+        ESP_LOGE(TAG, "display/LVGL initialization failed");
+        return;
+    }
+    bsp_display_backlight(80);
+    (void)bsp_battery_init();
+
+    badge_state_init(&s_state);
+    badge_state_set_connected(&s_state, false);
+
+    s_line_queue = xQueueCreate(BADGE_LINE_QUEUE_DEPTH, sizeof(badge_line_t));
+    s_key_queue = xQueueCreate(BADGE_KEY_QUEUE_DEPTH, sizeof(badge_key_event_t));
+    if (s_line_queue == NULL || s_key_queue == NULL) {
+        ESP_LOGE(TAG, "queue creation failed");
+        return;
+    }
+
+    // 字体自检：查两个字符能不能解析出字形描述符。字体表本身也可能「在 Flash 里
+    // 但不认识字符」——那时屏幕上什么都不会画，从外面看和「屏幕坏了」一模一样。
+    {
+        lv_font_glyph_dsc_t dsc;
+
+        ESP_LOGI(TAG, "font: line_height=%d base_line=%d subpx=%d",
+                 (int)badge_font_16.line_height, (int)badge_font_16.base_line,
+                 (int)badge_font_16.subpx);
+        ESP_LOGI(TAG, "font: 'A' found=%d, U+4E2D(中) found=%d",
+                 (int)lv_font_get_glyph_dsc(&badge_font_16, &dsc, 'A', 0),
+                 (int)lv_font_get_glyph_dsc(&badge_font_16, &dsc, 0x4E2D, 0));
+        // 光「查得到字形」不够：查得到而位图读错，屏幕上同样是空白。把字形自己的
+        // 尺寸与偏移也打出来——box 为 0 说明描述符里的位图数据是空的或错位的。
+        (void)lv_font_get_glyph_dsc(&badge_font_16, &dsc, 'A', 0);
+        ESP_LOGI(TAG, "font: 'A' box=%ux%u ofs=%d,%d adv=%d",
+                 (unsigned)dsc.box_w, (unsigned)dsc.box_h,
+                 (int)dsc.ofs_x, (int)dsc.ofs_y, (int)dsc.adv_w);
+        (void)lv_font_get_glyph_dsc(&badge_font_16, &dsc, 0x4E2D, 0);
+        ESP_LOGI(TAG, "font: 中 box=%ux%u ofs=%d,%d adv=%d",
+                 (unsigned)dsc.box_w, (unsigned)dsc.box_h,
+                 (int)dsc.ofs_x, (int)dsc.ofs_y, (int)dsc.adv_w);
+    }
+
+    // 界面先立起来（状态屏），再打开链路：一块黑屏等连接比「等电脑」这句话更糟。
     if (bsp_lvgl_lock(1000)) {
-        enter_menu();
+        badge_ui_init();
+        badge_state_to_ui(&s_state, &s_snapshot);
+        s_snapshot.battery_percent = s_battery_percent;
+        badge_ui_render(&s_snapshot);
         bsp_lvgl_unlock();
-        s_input_ready = true;
     }
 
-    ESP_LOGI(TAG, "就绪:Display=%d Button=%d Audio=%d Battery=%d",
-             s_ok[0], s_ok[1], s_ok[2], s_ok[3]);
+    created = xTaskCreate(badge_task, "badge", BADGE_APP_STACK, NULL, BADGE_APP_PRIORITY, NULL);
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "task creation failed");
+        return;
+    }
+    if (bsp_button_init(on_key, NULL) != ESP_OK) {
+        // 按键不可用意味着回答不了任何问题，但界面仍然能显示——那种情况下
+        // 用户至少能从屏幕上看到「有人在等」，然后回电脑处理。
+        ESP_LOGW(TAG, "button initialization failed");
+    }
+    if (badge_link_start(on_line, NULL) != ESP_OK) {
+        ESP_LOGE(TAG, "link initialization failed");
+        return;
+    }
+    send_hello();
 }

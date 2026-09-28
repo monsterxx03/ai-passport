@@ -1,0 +1,315 @@
+#include "badge_state.h"
+
+#include <string.h>
+
+static void set_notice(badge_state_t *state, const char *text, uint32_t duration_ms)
+{
+    size_t length = strlen(text);
+
+    if (length >= sizeof(state->notice)) {
+        length = sizeof(state->notice) - 1U;
+    }
+    memcpy(state->notice, text, length);
+    state->notice[length] = '\0';
+    state->notice_deadline = state->now + duration_ms;
+}
+
+// reset_cursor 把待答屏的游标归零。队首换了一条待答项就必须做这件事：否则上一题
+// 停在第三项，新题一上来光标就在第三项上，「确定」按下去答的是没看过的东西。
+static void reset_cursor(badge_state_t *state)
+{
+    state->selection = 0;
+    state->question_index = 0;
+    memset(state->picked, 0, sizeof(state->picked));
+}
+
+void badge_state_init(badge_state_t *state)
+{
+    memset(state, 0, sizeof(*state));
+}
+
+void badge_state_notice(badge_state_t *state, const char *text, uint32_t duration_ms)
+{
+    set_notice(state, text, duration_ms);
+}
+
+bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
+{
+    state->now += elapsed_ms;
+    if (state->notice[0] != '\0' && state->now >= state->notice_deadline) {
+        state->notice[0] = '\0';
+        return true;
+    }
+    return false;
+}
+
+void badge_state_set_connected(badge_state_t *state, bool connected)
+{
+    state->connected = connected;
+}
+
+static bool drop_ask(badge_state_t *state, unsigned long ref)
+{
+    size_t i;
+
+    for (i = 0; i < state->ask_count; ++i) {
+        if (state->asks[i].ref != ref) {
+            continue;
+        }
+        if (i + 1U < state->ask_count) {
+            memmove(&state->asks[i], &state->asks[i + 1U],
+                    (state->ask_count - i - 1U) * sizeof(state->asks[0]));
+        }
+        state->ask_count -= 1U;
+        if (i == 0U) {
+            reset_cursor(state);
+        }
+        return true;
+    }
+    return false;
+}
+
+static bool push_ask(badge_state_t *state, const badge_msg_t *message)
+{
+    size_t i;
+
+    // 同一条待答项的内容可能被主机重发（它的题面在流式阶段被改写）。用同样的
+    // ref 落到原位，而不是当成新的一项——否则屏幕上会凭空多出一条。
+    for (i = 0; i < state->ask_count; ++i) {
+        if (state->asks[i].ref == message->ref) {
+            state->asks[i] = *message;
+            return true;
+        }
+    }
+    if (state->ask_count >= BADGE_MAX_ASKS) {
+        // 装不下了。留在主机那边，等这里的处理完——主机每次同步都会重发它认为
+        // 对端还没有的东西，所以丢掉不等于永远看不见。
+        return false;
+    }
+    state->asks[state->ask_count] = *message;
+    state->ask_count += 1U;
+    if (state->ask_count == 1U) {
+        reset_cursor(state);
+    }
+    return true;
+}
+
+bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
+{
+    if (message == NULL) {
+        return false;
+    }
+    switch (message->kind) {
+    case BADGE_MSG_STATE: {
+        bool changed = (state->session_count != message->session_count) ||
+                       (memcmp(state->sessions, message->sessions,
+                               sizeof(state->sessions)) != 0);
+
+        state->session_count = message->session_count;
+        memcpy(state->sessions, message->sessions, sizeof(state->sessions));
+        return changed;
+    }
+    case BADGE_MSG_ASK:
+        return push_ask(state, message);
+    case BADGE_MSG_ASK_GONE:
+        return drop_ask(state, message->ref);
+    case BADGE_MSG_ERROR:
+        // 主机的拒绝要给用户看见：不然按下去没反应，看起来像是设备坏了。
+        set_notice(state, message->message[0] != '\0' ? message->message : "主机拒绝了这次回答",
+                   5000U);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void move_selection(badge_state_t *state, int delta, size_t count)
+{
+    if (count == 0U) {
+        state->selection = 0;
+        return;
+    }
+    if (delta < 0) {
+        state->selection = state->selection == 0U ? count - 1U : state->selection - 1U;
+    } else {
+        state->selection = (state->selection + 1U) % count;
+    }
+}
+
+// append_label 把标签拼进答案串。多选的答案由调用方用 ", " 拼好——这与 TUI /
+// desktop 的约定一致，模型看到的是同一个形状。
+static void append_label(char *buffer, size_t cap, const char *label)
+{
+    size_t used = strlen(buffer);
+    const char *separator = used > 0U ? ", " : "";
+
+    if (used + strlen(separator) + strlen(label) + 1U > cap) {
+        return; // 装不下就到此为止：宁可少一项，也不要写出半个字
+    }
+    (void)strcat(buffer, separator);
+    (void)strcat(buffer, label);
+}
+
+static bool submit_questions(badge_state_t *state, const badge_msg_t *ask, char *out,
+                             size_t cap, size_t *out_length)
+{
+    const char *keys[BADGE_MAX_QUESTIONS];
+    const char *values[BADGE_MAX_QUESTIONS];
+    char joined[BADGE_MAX_QUESTIONS][BADGE_TITLE_MAX * 2];
+    size_t count = 0;
+    size_t question;
+
+    for (question = 0; question < ask->question_count; ++question) {
+        const badge_question_t *item = &ask->questions[question];
+        size_t option;
+
+        joined[question][0] = '\0';
+        for (option = 0; option < item->option_count; ++option) {
+            if ((state->picked[question] & (uint8_t)(1U << option)) == 0U) {
+                continue;
+            }
+            append_label(joined[question], sizeof(joined[question]),
+                         item->options[option].label);
+        }
+        if (joined[question][0] == '\0') {
+            // 有一题没答就不提交：answers 里少一个键，模型会收到一个残缺的答复，
+            // 而它无从知道那一题是没人答还是被跳过了。
+            set_notice(state, "还有问题没有作答", 3000U);
+            return false;
+        }
+        keys[question] = item->question;
+        values[question] = joined[question];
+        count += 1U;
+    }
+
+    *out_length = badge_proto_answer_questions(out, cap, ask->ref, keys, values, count);
+    return *out_length > 0U;
+}
+
+static bool key_permission(badge_state_t *state, const badge_msg_t *ask, badge_key_t key,
+                           char *out, size_t cap, size_t *out_length)
+{
+    switch (key) {
+    case BADGE_KEY_UP:
+        move_selection(state, -1, ask->option_count);
+        return false;
+    case BADGE_KEY_DOWN:
+        move_selection(state, 1, ask->option_count);
+        return false;
+    case BADGE_KEY_OK:
+        // 决定原样取自选项的机器值——设备不知道 allow_once 是什么意思，也不该知道。
+        *out_length = badge_proto_answer_permission(out, cap, ask->ref,
+                                                    ask->options[state->selection].value);
+        return *out_length > 0U;
+    case BADGE_KEY_BACK:
+    default:
+        // 一条要放行的命令没有「忽略」这个选项：不回答它就一直是没回答。
+        return false;
+    }
+}
+
+static bool key_questions(badge_state_t *state, const badge_msg_t *ask, badge_key_t key,
+                          char *out, size_t cap, size_t *out_length)
+{
+    const badge_question_t *item = &ask->questions[state->question_index];
+
+    switch (key) {
+    case BADGE_KEY_UP:
+        move_selection(state, -1, item->option_count);
+        return false;
+    case BADGE_KEY_DOWN:
+        move_selection(state, 1, item->option_count);
+        return false;
+    case BADGE_KEY_BACK:
+        if (item->multi_select) {
+            return submit_questions(state, ask, out, cap, out_length);
+        }
+        // 单选时长按是「回到上一题」；第一题上它什么都不做。
+        if (state->question_index > 0U) {
+            state->question_index -= 1U;
+            state->selection = 0;
+        }
+        return false;
+    case BADGE_KEY_OK:
+    default:
+        break;
+    }
+
+    if (item->multi_select) {
+        state->picked[state->question_index] ^= (uint8_t)(1U << state->selection);
+        return false;
+    }
+    // 单选：按下就是选中，然后走下一题或提交。单选的题不存在「没选中」的中间态，
+    // 所以这里不会出现 submit 被拒绝的情况。
+    state->picked[state->question_index] = (uint8_t)(1U << state->selection);
+    if (state->question_index + 1U < ask->question_count) {
+        state->question_index += 1U;
+        state->selection = 0;
+        return false;
+    }
+    return submit_questions(state, ask, out, cap, out_length);
+}
+
+bool badge_state_key(badge_state_t *state, badge_key_t key, char *out, size_t cap,
+                     size_t *out_length)
+{
+    const badge_msg_t *ask;
+
+    if (out_length != NULL) {
+        *out_length = 0U;
+    }
+    if (out != NULL && cap > 0U) {
+        out[0] = '\0';
+    }
+    if (state->ask_count == 0U || out == NULL || out_length == NULL) {
+        // 状态屏上三个键都没有意义：那里没有可做的决定。
+        return false;
+    }
+
+    ask = &state->asks[0];
+    if (ask->ask_kind == BADGE_ASK_QUESTIONS) {
+        return key_questions(state, ask, key, out, cap, out_length);
+    }
+    return key_permission(state, ask, key, out, cap, out_length);
+}
+
+void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot)
+{
+    const badge_session_t *shown = NULL;
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->connected = state->connected;
+    snapshot->notice = state->notice[0] != '\0' ? state->notice : NULL;
+    snapshot->session_count = state->session_count;
+    snapshot->battery_percent = -1; // 由调用方用 BSP 读到的值覆盖
+
+    // 正在等你的那个会话优先：状态屏上最有用的信息是「谁需要我」，
+    // 而不是「哪个 id 排在前」。
+    if (state->ask_count > 0U) {
+        size_t i;
+
+        for (i = 0; i < state->session_count; ++i) {
+            if (strcmp(state->sessions[i].id, state->asks[0].session) == 0) {
+                shown = &state->sessions[i];
+                break;
+            }
+        }
+    }
+    if (shown == NULL && state->session_count > 0U) {
+        shown = &state->sessions[0];
+    }
+    if (shown != NULL) {
+        snapshot->has_session = true;
+        (void)memcpy(snapshot->session_title, shown->title, sizeof(snapshot->session_title));
+        (void)memcpy(snapshot->state_label, shown->label, sizeof(snapshot->state_label));
+        (void)memcpy(snapshot->state_detail, shown->detail, sizeof(snapshot->state_detail));
+    }
+
+    if (state->ask_count > 0U) {
+        snapshot->ask = &state->asks[0];
+        snapshot->selection = state->selection;
+        snapshot->question_index = state->question_index;
+        snapshot->checked = state->picked[state->question_index];
+    }
+    snapshot->view = state->ask_count > 0U ? BADGE_UI_ASK : BADGE_UI_STATUS;
+}

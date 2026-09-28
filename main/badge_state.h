@@ -1,0 +1,71 @@
+// badge_state —— 设备侧的状态机：收到什么、键按下时该做什么。
+//
+// 它与 ESP-IDF 和 LVGL 都无关，只依赖协议结构（tests/test_badge_state.c 完整覆盖
+// 它）。这样做的理由很直接：这块板上最贵的一类 bug 是「按键按下去没反应」和
+// 「答回去的答案对不上题」——两者都能在主机上试出来，不必每次都烧板子。
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "badge_proto.h"
+#include "badge_ui.h"
+
+// 同时挂着的待答项上限。一个会话一次只等一件事，所以这个数就是「几个会话同时在
+// 等我」；超出部分留在主机那边，等这里的处理完由主机重发。
+#define BADGE_MAX_ASKS 4
+
+typedef enum {
+    BADGE_KEY_UP = 0,
+    BADGE_KEY_DOWN,
+    BADGE_KEY_OK,   // 单按：选中/切换勾选
+    BADGE_KEY_BACK, // 长按确定：多选提交；单选的题也可用它回到上一题
+} badge_key_t;
+
+typedef struct {
+    bool connected;
+
+    // 会话状态（状态屏）
+    size_t session_count;
+    badge_session_t sessions[BADGE_MAX_SESSIONS];
+
+    // 待答队列。一次只显示队首，答完出队。
+    size_t ask_count;
+    badge_msg_t asks[BADGE_MAX_ASKS];
+
+    // 待答屏上的游标
+    size_t selection;
+    size_t question_index;
+    uint8_t picked[BADGE_MAX_QUESTIONS]; // 每题的选中位掩码（单选也用它的一位）
+
+    // 一次性提示。notice_until 是一个单调递增的计数，由调用方推进
+    // （badge_state_tick），到点自动清掉——提示不该永远挂在那里。
+    char notice[BADGE_DETAIL_MAX];
+    uint32_t notice_deadline;
+    uint32_t now;
+} badge_state_t;
+
+void badge_state_init(badge_state_t *state);
+
+// badge_state_tick 推进内部时钟并让过期提示消失。返回 true 表示状态变了（需要重绘）。
+bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms);
+
+void badge_state_set_connected(badge_state_t *state, bool connected);
+
+// badge_state_apply 吃一条协议消息。返回 true 表示视图变了。
+bool badge_state_apply(badge_state_t *state, const badge_msg_t *message);
+
+// badge_state_notice 显示一行一次性提示（比如「已发送」）。它自己会过期——
+// 按下一个键之后界面上必须有动静，否则用户只能靠猜。
+void badge_state_notice(badge_state_t *state, const char *text, uint32_t duration_ms);
+
+// badge_state_key 处理一次按键。
+//
+// 返回 true 表示**有东西要发**：out 里是一条完整的协议行（不含前缀与换行），
+// 调用方负责送出去。送失败时调用方回滚不了状态，所以这里的动作设计成幂等：
+// 同一条回答再按一次只会重发同样的一行。
+bool badge_state_key(badge_state_t *state, badge_key_t key, char *out, size_t cap,
+                     size_t *out_length);
+
+void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot);

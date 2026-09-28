@@ -1,16 +1,16 @@
+# Tachi Badge 是二次开发应用：固件只编译它自己的模块。
+#
+# 基线的 demo_*.c / ui_pixel.c 仍留在树里（它们是板级硬件的参考实现，也是上游
+# 的分支共同点），但不参与本应用——界面是重新设计的，不是那个测试菜单的外壳。
 idf_component_register(
     SRCS "main.c"
-         "demo_navigation.c"
-         "ui_pixel.c"
-         "ui_pixel_math.c"
-         "demo_display.c"
-         "demo_button.c"
-         "demo_audio.c"
-         "demo_battery.c"
-         "demo_radio.c"
-         "demo_wifi.c"
-         "demo_ble.c"
-         "demo_low_power.c"
+         "badge_json.c"
+         "badge_proto.c"
+         "badge_link.c"
+         "badge_state.c"
+         "badge_ui.c"
+         "badge_font_16.c"
+         "badge_avatar.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp bt esp_event esp_hw_support esp_netif esp_timer esp_wifi nvs_flash
+    REQUIRES bsp esp_driver_usb_serial_jtag esp_timer lvgl nvs_flash
 )

@@ -1,0 +1,361 @@
+// 状态机的单元测试。这里覆盖的是设备上最让人抓狂的两类故障：按下去没反应，
+// 以及答回去的答案对不上题。两者都能在主机上试出来。
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "badge_json.h"
+#include "badge_state.h"
+
+static badge_state_t state;
+static char payload[1024];
+
+static void fill_permission(badge_msg_t *message, unsigned long ref)
+{
+    memset(message, 0, sizeof(*message));
+    message->kind = BADGE_MSG_ASK;
+    message->ref = ref;
+    message->ask_kind = BADGE_ASK_PERMISSION;
+    (void)strcpy(message->session, "s1");
+    (void)strcpy(message->title, "Bash 确认");
+    (void)strcpy(message->body, "$ rm -rf build/");
+    message->option_count = 3U;
+    (void)strcpy(message->options[0].label, "允许一次");
+    (void)strcpy(message->options[0].value, BADGE_DECISION_ALLOW_ONCE);
+    (void)strcpy(message->options[1].label, "本会话允许");
+    (void)strcpy(message->options[1].value, BADGE_DECISION_ALLOW_SESSION);
+    (void)strcpy(message->options[2].label, "拒绝");
+    (void)strcpy(message->options[2].value, BADGE_DECISION_DENY);
+}
+
+static void fill_questions(badge_msg_t *message, unsigned long ref, bool multi, size_t count)
+{
+    size_t i;
+
+    memset(message, 0, sizeof(*message));
+    message->kind = BADGE_MSG_ASK;
+    message->ref = ref;
+    message->ask_kind = BADGE_ASK_QUESTIONS;
+    (void)strcpy(message->session, "s2");
+    (void)strcpy(message->title, "方向");
+    message->question_count = count;
+    for (i = 0; i < count; ++i) {
+        badge_question_t *question = &message->questions[i];
+        char text[32];
+
+        (void)snprintf(text, sizeof(text), "第 %u 题？", (unsigned)(i + 1U));
+        (void)strcpy(question->question, text);
+        (void)strcpy(question->header, "方向");
+        question->multi_select = multi;
+        question->option_count = 2U;
+        (void)strcpy(question->options[0].label, "甲");
+        (void)strcpy(question->options[0].value, "甲");
+        (void)strcpy(question->options[1].label, "乙");
+        (void)strcpy(message->questions[i].options[1].value, "乙");
+    }
+}
+
+static void fill_state(badge_msg_t *message, const char *id, const char *label)
+{
+    memset(message, 0, sizeof(*message));
+    message->kind = BADGE_MSG_STATE;
+    message->session_count = 1U;
+    (void)strcpy(message->sessions[0].id, id);
+    (void)strcpy(message->sessions[0].title, "修 lint");
+    (void)strcpy(message->sessions[0].label, label);
+    (void)strcpy(message->sessions[0].detail, "推理中…");
+}
+
+// 断言发出去的是一条权限回答，并返回它的 decision。
+static const char *answer_decision(size_t length)
+{
+    bjson_t json = {.buf = payload, .len = length};
+    bjson_val_t root;
+    bjson_val_t value;
+    static char text[32];
+
+    assert(length > 0U);
+    assert(bjson_parse(&json, &root));
+    assert(bjson_obj_get(&root, "t", &value));
+    bjson_str_into(&value, text, sizeof(text), NULL);
+    assert(strcmp(text, "answer") == 0);
+    assert(bjson_obj_get(&root, "decision", &value));
+    bjson_str_into(&value, text, sizeof(text), NULL);
+    return text;
+}
+
+static unsigned long answer_ref(size_t length)
+{
+    bjson_t json = {.buf = payload, .len = length};
+    bjson_val_t root;
+    bjson_val_t value;
+
+    assert(bjson_parse(&json, &root));
+    assert(bjson_obj_get(&root, "ref", &value));
+    return (unsigned long)bjson_int(&value, -1L);
+}
+
+static void test_state_message_moves_the_view(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    fill_state(&message, "s1", "执行");
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_STATUS);
+    assert(snapshot.has_session);
+    assert(strcmp(snapshot.state_label, "执行") == 0);
+    assert(strcmp(snapshot.session_title, "修 lint") == 0);
+
+    // 同样的内容再来一次不算变化：界面不该为没变的东西重绘。
+    assert(!badge_state_apply(&state, &message));
+}
+
+static void test_permission_cursor_wraps_and_answers(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_permission(&message, 7UL);
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_ASK);
+    assert(snapshot.ask != NULL && snapshot.ask->ref == 7UL);
+    assert(snapshot.selection == 0U);
+
+    // 第一个键不该发出任何东西。
+    assert(!badge_state_key(&state, BADGE_KEY_UP, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.selection == 2U); // 首项往上绕回末项
+
+    assert(!badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.selection == 0U);
+
+    // 选中「本会话允许」并提交。
+    assert(!badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length));
+    assert(badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(answer_ref(length) == 7UL);
+    assert(strcmp(answer_decision(length), BADGE_DECISION_ALLOW_SESSION) == 0);
+}
+
+// 待答项被主机撤销（有人在电脑上答掉了）：它必须从队列里消失，游标回到原点。
+static void test_ask_gone_drops_and_resets(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_permission(&message, 1UL);
+    assert(badge_state_apply(&state, &message));
+    (void)badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length);
+
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_ASK_GONE;
+    message.ref = 1UL;
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_STATUS);
+
+    // 第二条待答项进来时游标必须是干净的：否则「确定」按下去答的是没看过的那一项。
+    fill_permission(&message, 2UL);
+    assert(badge_state_apply(&state, &message));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.selection == 0U);
+}
+
+// 同一条待答项被主机重发（题面在流式阶段被改写）：原地更新，屏幕上不多出一条。
+static void test_repeated_ask_updates_in_place(void)
+{
+    badge_msg_t message;
+
+    badge_state_init(&state);
+    fill_permission(&message, 5UL);
+    assert(badge_state_apply(&state, &message));
+    (void)strcpy(message.body, "$ rm -rf dist/");
+    assert(badge_state_apply(&state, &message));
+    assert(state.ask_count == 1U);
+    assert(strcmp(state.asks[0].body, "$ rm -rf dist/") == 0);
+}
+
+static void test_multi_select_requires_an_explicit_submit(void)
+{
+    badge_msg_t message;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_questions(&message, 3UL, true, 1U);
+    assert(badge_state_apply(&state, &message));
+
+    // 勾第一项：不发出任何东西。
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(state.picked[0] == 1U);
+
+    // 下行再勾：两项都记着。
+    (void)badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length);
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(state.picked[0] == 3U);
+
+    // 取消第一项。
+    assert(!badge_state_key(&state, BADGE_KEY_UP, payload, sizeof(payload), &length));
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(state.picked[0] == 2U);
+
+    // 长按提交。
+    assert(badge_state_key(&state, BADGE_KEY_BACK, payload, sizeof(payload), &length));
+    assert(answer_ref(length) == 3UL);
+
+    // 只勾了「乙」，答案里就该只有它。
+    assert(strstr(payload, "乙") != NULL);
+    assert(strstr(payload, "甲") == NULL);
+}
+
+static void test_multiple_questions_advance_then_submit(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_questions(&message, 4UL, false, 2U);
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 0U);
+
+    // 第一题选第二项：进入第二题，不提交。
+    (void)badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length);
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 1U);
+    assert(snapshot.selection == 0U); // 新题从第一项开始
+
+    // 第二题选第一项：两题都答完了才提交。
+    assert(badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(answer_ref(length) == 4UL);
+    assert(strstr(payload, "第 1 题？") != NULL);
+    assert(strstr(payload, "第 2 题？") != NULL);
+    assert(strstr(payload, "乙") != NULL); // 第一题选的是第二项
+}
+
+// 单选时可以长按退回上一题：答错一题不该整条重来。
+static void test_single_select_can_go_back(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_questions(&message, 6UL, false, 2U);
+    assert(badge_state_apply(&state, &message));
+
+    (void)badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length);
+    (void)badge_state_key(&state, BADGE_KEY_BACK, payload, sizeof(payload), &length);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 0U);
+}
+
+// 主机拒绝了回答：屏幕上要看得见，否则按下去没反应像是设备坏了。
+static void test_error_sets_a_visible_notice(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_ERROR;
+    message.ref = 9UL;
+    (void)strcpy(message.message, "no such pending request");
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice != NULL);
+    assert(strcmp(snapshot.notice, "no such pending request") == 0);
+
+    // 提示会自己消失。
+    assert(!badge_state_tick(&state, 1000U));
+    assert(badge_state_tick(&state, 6000U));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice == NULL);
+}
+
+// 队列满了以后，后来的待答项被丢掉——但不能把已经排队的弄乱。
+static void test_queue_is_bounded(void)
+{
+    badge_msg_t message;
+    size_t i;
+
+    badge_state_init(&state);
+    for (i = 0; i < BADGE_MAX_ASKS; ++i) {
+        fill_permission(&message, (unsigned long)(i + 1U));
+        assert(badge_state_apply(&state, &message));
+    }
+    assert(state.ask_count == BADGE_MAX_ASKS);
+
+    fill_permission(&message, 99UL);
+    assert(!badge_state_apply(&state, &message));
+    assert(state.ask_count == BADGE_MAX_ASKS);
+    assert(state.asks[0].ref == 1UL); // 队首没被动过
+}
+
+// 没有待答项时，三个键都没有意义——状态屏不是一个可以按的地方。
+static void test_keys_do_nothing_without_an_ask(void)
+{
+    size_t length = 123U;
+
+    badge_state_init(&state);
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(length == 0U);
+    assert(!badge_state_key(&state, BADGE_KEY_UP, payload, sizeof(payload), &length));
+}
+
+// 状态屏优先显示「正在等你的那个会话」，而不是列表里的第一个。
+static void test_ui_prefers_the_session_that_is_waiting(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_STATE;
+    message.session_count = 2U;
+    (void)strcpy(message.sessions[0].id, "idle-one");
+    (void)strcpy(message.sessions[0].label, "思考");
+    (void)strcpy(message.sessions[1].id, "waiting-one");
+    (void)strcpy(message.sessions[1].label, "提问");
+    (void)strcpy(message.sessions[1].title, "在等我的那个");
+    assert(badge_state_apply(&state, &message));
+
+    fill_permission(&message, 8UL);
+    (void)strcpy(message.session, "waiting-one");
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(strcmp(snapshot.session_title, "在等我的那个") == 0);
+    assert(strcmp(snapshot.state_label, "提问") == 0);
+}
+
+int main(void)
+{
+    test_state_message_moves_the_view();
+    test_permission_cursor_wraps_and_answers();
+    test_ask_gone_drops_and_resets();
+    test_repeated_ask_updates_in_place();
+    test_multi_select_requires_an_explicit_submit();
+    test_multiple_questions_advance_then_submit();
+    test_single_select_can_go_back();
+    test_error_sets_a_visible_notice();
+    test_queue_is_bounded();
+    test_keys_do_nothing_without_an_ask();
+    test_ui_prefers_the_session_that_is_waiting();
+    printf("test_badge_state: OK\n");
+    return 0;
+}
