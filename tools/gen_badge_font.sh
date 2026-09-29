@@ -14,7 +14,17 @@ set -euo pipefail
 FONT="${BADGE_FONT_SOURCE:-/Library/Fonts/Arial Unicode.ttf}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/main/badge_font_16.c"
-RANGES="0x20-0x7F,0x3000-0x303F,0x4E00-0x9FA5,0xFF01-0xFF5E"
+# 字符范围要覆盖**设备上会出现的任意字符**，而不只是「常用汉字」：
+#   - 基本拉丁：ASCII 与英文 UI
+#   - 拉丁补充：`·`(U+00B7)、`°`、`×` 这些标点与人名里的重音字母
+#   - 通用标点：`…`(U+2026)、`—`(U+2014)、`•`(U+2022)、弯引号——tachi 下发的
+#     状态副标题（「推理中…」）和命令预览里都会出现。少了这一段，屏幕上就是
+#     LVGL 的缺字占位方框，而 UTF-8 正确、构建通过，看起来像界面坏了。
+#   - CJK 标点 / 全角形式 / CJK 统一表意文字
+#
+# 范围宁宽勿窄：每多一段只是让字体文件大几十 KB，而漏一个字符就是用户看得见的
+# 方框。唯一要避开的是 emoji（U+1F300 以上，体积按 MB 计）。
+RANGES="0x20-0x7F,0xA0-0xFF,0x2000-0x206F,0x3000-0x303F,0x4E00-0x9FA5,0xFF01-0xFF5E"
 
 if [[ ! -f "${FONT}" ]]; then
     echo "找不到字体：${FONT}" >&2
