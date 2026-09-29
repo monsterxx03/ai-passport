@@ -38,18 +38,32 @@ void badge_state_notice(badge_state_t *state, const char *text, uint32_t duratio
 // 挡在主屏前面的东西。
 #define BADGE_INFO_MS 8000U
 
+uint8_t badge_state_hint_phase(const badge_state_t *state)
+{
+    return (uint8_t)((state->now / BADGE_HINT_ROTATE_MS) % 2U);
+}
+
 bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
 {
+    const uint8_t phase_before = badge_state_hint_phase(state);
+    bool changed = false;
+
     state->now += elapsed_ms;
     if (state->notice[0] != '\0' && state->now >= state->notice_deadline) {
         state->notice[0] = '\0';
-        return true;
+        changed = true;
     }
     if (state->info_open && state->now >= state->info_deadline) {
         state->info_open = false;
-        return true;
+        changed = true;
     }
-    return false;
+    // 底栏那两条提示的轮换（见 badge_state_hint_phase）：翻面也要报一次「变了」，否则
+    // 那句话永远停在同一条上——渲染只在「变了」的时候发生（main.c 的 dirty）。
+    // 注意这里是累加而不是提前 return：上面两条过期判定不能被这件事顶掉。
+    if (badge_state_hint_phase(state) != phase_before) {
+        changed = true;
+    }
+    return changed;
 }
 
 void badge_state_info_open(badge_state_t *state)
@@ -437,4 +451,7 @@ void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot
     } else {
         snapshot->view = BADGE_UI_STATUS;
     }
+    // 底栏那两条提示该显示哪一条。放在这里而不是界面里：相位是时间推出来的（状态机的
+    // 时钟），界面只读它——它不该自己养一个计时器。
+    snapshot->hint_phase = badge_state_hint_phase(state);
 }

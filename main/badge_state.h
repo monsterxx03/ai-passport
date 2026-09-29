@@ -16,6 +16,13 @@
 // 等我」；超出部分留在主机那边，等这里的处理完由主机重发。
 #define BADGE_MAX_ASKS 4
 
+// 状态屏空闲时，底栏那两条提示（长按上 = 忘记电脑 / 按住确定 = 说话）每隔这么久换一条。
+//
+// 为什么要轮换：底栏一行只放得下 220px ≈ 13 个汉字，而两条合起来 15 个；它们又都是
+// **隐藏手势**——不写在屏幕上没人猜得到有这两个动作。相位由内部时钟推出来（不占字段，
+// 见 badge_state_hint_phase），所以这里是唯一要改的节拍。
+#define BADGE_HINT_ROTATE_MS 4000U
+
 typedef enum {
     BADGE_KEY_UP = 0, // 短按上/下：在选项间移动
     BADGE_KEY_DOWN,
@@ -23,7 +30,10 @@ typedef enum {
     BADGE_KEY_NEXT,   // 长按下：下一题（最后一题上无动作）
     BADGE_KEY_OK,     // 短按确定：单选=选中并前进；多选=勾选/取消勾选
     BADGE_KEY_SUBMIT, // 长按确定：提交。换题走 PREV/NEXT，这样一套手势对两种题型都成立
+                      // （待答屏专用：状态屏上的确定键现在是「按住说话」，见 TALK_*）
     BADGE_KEY_INFO,   // 双击确定：看一眼当前会话的账（模型、上下文、花费）
+    BADGE_KEY_TALK_START, // 按住确定（按下那一下）：开始录
+    BADGE_KEY_TALK_END,   // 松开确定（抬起那一下）：结束并发送
 } badge_key_t;
 
 typedef struct {
@@ -68,6 +78,13 @@ void badge_state_init(badge_state_t *state);
 
 // badge_state_tick 推进内部时钟并让过期提示消失。返回 true 表示状态变了（需要重绘）。
 bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms);
+
+// badge_state_hint_phase 回答「状态屏空闲时底栏该显示哪一条提示」：0 或 1，每
+// BADGE_HINT_ROTATE_MS 翻一次。
+//
+// 它是内部时钟的纯函数，不存字段：相位是时间的函数，存一份只多一个会失同步的地方
+// （而对它的推进必须发生在这里——渲染只在「变了」的时候发生，见 badge_state_tick）。
+uint8_t badge_state_hint_phase(const badge_state_t *state);
 
 void badge_state_set_connected(badge_state_t *state, bool connected);
 

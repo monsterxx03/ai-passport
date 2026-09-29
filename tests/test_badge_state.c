@@ -636,6 +636,34 @@ static void test_alert_kinds_reach_the_state(void)
     assert(state.alert_pending == BADGE_ALERT_DONE);
 }
 
+// 状态屏空闲时底栏那两条提示要轮换（一行放不下两条，见 badge_state_hint_phase）。
+// 钉三件事：开机是第一条、过一个周期翻面、以及**翻面那一刻 tick 必须说自己变了**——
+// 渲染只在「变了」的时候发生，不报的话屏幕上那句永远不换。
+static void test_idle_hint_rotates(void)
+{
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    assert(badge_state_hint_phase(&state) == 0U);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.hint_phase == 0U);
+
+    // 一个周期之内不翻面，也不报「变了」：每 100ms 都重画一次是在烧电。
+    assert(!badge_state_tick(&state, BADGE_HINT_ROTATE_MS - 100U));
+    assert(badge_state_hint_phase(&state) == 0U);
+
+    // 跨过周期边界：翻面，并且要报一次。
+    assert(badge_state_tick(&state, 100U));
+    assert(badge_state_hint_phase(&state) == 1U);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.hint_phase == 1U);
+
+    // 再一个周期转回来。
+    assert(!badge_state_tick(&state, BADGE_HINT_ROTATE_MS - 100U));
+    assert(badge_state_tick(&state, 100U));
+    assert(badge_state_hint_phase(&state) == 0U);
+}
+
 int main(void)
 {
     test_state_message_moves_the_view();
@@ -658,6 +686,7 @@ int main(void)
     test_keys_do_nothing_without_an_ask();
     test_ui_prefers_the_session_that_is_waiting();
     test_alert_kinds_reach_the_state();
+    test_idle_hint_rotates();
     printf("test_badge_state: OK\n");
     return 0;
 }

@@ -347,6 +347,18 @@ static void set_battery(lv_obj_t *label, const badge_ui_snapshot_t *snapshot)
     lv_label_set_text(label, text);
 }
 
+// 状态屏空闲时底栏轮换的两条提示。
+//
+// 两条都是**隐藏手势**：长按上 = 忘记那台电脑、按住确定 = 说话（按下开始录，松开发送）。
+// 屏幕是它们唯一的说明书——不写出来没人猜得到。而底栏只有一行（220px ≈ 13 个汉字），两条
+// 合起来 15 个，所以按相位轮换（见 badge_state_hint_phase）。
+//
+// ⚠ 下标 0 必须是「忘记电脑」：链路断着的时候只显示它（见 set_status_footer）——那一刻
+// 说话没有去处，而「电脑那边还留着旧配对」正是要靠这一下拉回来的处境。换文案可以，别换
+// 顺序。
+// 键名（上 / 确定）和动作词都跟这块屏别处的叫法一致（「再长按一次上：忘记电脑」）。
+static const char *const STATUS_HINTS[2] = {"长按上：忘记电脑", "按住确定：说话"};
+
 // 状态屏底栏。一次性提示优先——它说的是刚发生的事（「已忘记那台电脑」），而这块
 // 屏幕上是唯一能把它讲出来的地方；没有提示时才轮到「另有 N 个会话在跑」。
 static void set_status_footer(const badge_ui_snapshot_t *snapshot)
@@ -377,7 +389,15 @@ static void set_status_footer(const badge_ui_snapshot_t *snapshot)
         lv_label_set_text(s_st_footer, footer);
         return;
     }
-    lv_label_set_text(s_st_footer, "");
+    // 空闲：没有提示、没有别的会话、也没在录音。此刻这块屏唯一还能告诉用户的，就是那两个
+    // 长按能干什么——它们是隐藏手势，屏幕不说就没人知道。相位由状态机推进（按相位选一条，
+    // 而不是把两条都塞进去：底栏放不下）。
+    //
+    // 链路断着时只说「忘记电脑」：那一刻说话没有去处（录了也发不出去），而电脑上留着一份
+    // 旧配对正是要靠这一下才能清掉——这一条恰恰在最需要它的时候最有价值。
+    const size_t hint = (snapshot->connected && snapshot->hint_phase != 0U) ? 1U : 0U;
+
+    lv_label_set_text(s_st_footer, STATUS_HINTS[hint]);
 }
 
 static uint32_t status_color(const badge_ui_snapshot_t *snapshot)
