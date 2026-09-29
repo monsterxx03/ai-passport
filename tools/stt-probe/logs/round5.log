@@ -1,0 +1,72 @@
+=== 第五轮：语言判据（汉字优先，否则比置信度）===
+已装资产: en_AU,en_CA,en_GB,en_IE,en_IN,en_NZ,en_SG,en_US,en_ZA,zh_CN,zh_TW
+
+[lang_zh_1] 期望 zh  原句: 帮我把这个改动提交一下，顺便写一句 commit message
+  16k 无损       [1047ms] zh 0.90 / en 0.01  有汉字 → zh ✓
+      zh: 帮我把这个改动提交一下 ，顺便写一句 commitmessage。
+      en: , commute message.
+  16k ADPCM 4:1  [195ms] zh 0.92 / en 0.01  有汉字 → zh ✓
+      zh: 帮我把这个改动提交一下 ，顺便写一句 commutmessage。
+      en: , commute message.
+  8k  ADPCM 4:1  [195ms] zh 0.85 / en 0.06  有汉字 → zh ✓
+      zh: 帮我把这个改动提交一下 ，顺便写一句 commitmessage。
+      en: Commit message.
+
+[lang_zh_2] 期望 zh  原句: 把这个 commit revert 掉，然后 rerun 一下测试，最后 push 到 main
+  16k 无损       [257ms] zh 0.58 / en 0.01  有汉字 → zh ✓
+      zh: 把这个 commit revert掉 ，然后 reround一下测试最后 pushop man。
+      en: Magic, commit river, yang ho, rerong, yang, sushi, tui ho, tu, shao, main.
+  16k ADPCM 4:1  [259ms] zh 0.65 / en 0.02  有汉字 → zh ✓
+      zh: 把这个 commit rivert掉 ，然后 rerom一下测试最后 pushop main。
+      en: Magic, commit, river, yao, yang, ho, ri, yang, ho.
+  8k  ADPCM 4:1  [203ms] zh 0.25 / en 0.00  有汉字 → zh ✓
+      zh: 把这个 commit reverte掉 ，然后 ream一下测试最后通时到内。
+      en: 
+
+[lang_zh_3] 期望 zh  原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
+  16k 无损       [214ms] zh 0.35 / en 0.06  有汉字 → zh ✓
+      zh: 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+      en: Hi Yisian, Ben, the R S S I, her battery level. Hi, you, family.
+  16k ADPCM 4:1  [209ms] zh 0.44 / en 0.07  有汉字 → zh ✓
+      zh: 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
+      en: Hi Yi Xia, Ben, R S S I, her battery level. Hi, you, Lian Jian Jiang.
+  8k  ADPCM 4:1  [208ms] zh 0.09 / en 0.35  有汉字 → zh ✓
+      zh: 看一下单 RSSI和 betarylevel还有连接间隔。
+      en: Hi, R S S I, her battery level. Hi
+
+[lang_zh_4] 期望 zh  原句: 先跑一下 lint，然后 make test 确认没有回归
+  16k 无损       [210ms] zh 0.66 / en 0.16  有汉字 → zh ✓
+      zh: 先跑一下 Lint，然后 make trest确认没有回归。
+      en: Xian pao yi Xian ling, Yang ho make chest.
+  16k ADPCM 4:1  [212ms] zh 0.76 / en 0.04  有汉字 → zh ✓
+      zh: 先跑一下 Lint，然后 make trest确认没有回归。
+      en: Xian pao yi Xian ling, Yang ho make chest chi meo Hui Gui.
+  8k  ADPCM 4:1  [194ms] zh 0.79 / en 0.11  有汉字 → zh ✓
+      zh: 先跑一下 Lint，然后 maketes确认没有回归。
+      en: Xian pao yi Xian ling, Yang ho make.
+
+[lang_en_1] 期望 en  原句: please revert that commit and rerun the tests
+  16k 无损       [185ms] zh 0.54 / en 0.70  无汉字，比置信度 0.54 vs 0.70 → en ✓
+      zh: Pleaer tha comitenyron the test.
+      en: Please revert that commitment and rerun the tests.
+  16k ADPCM 4:1  [182ms] zh 0.56 / en 0.55  无汉字，比置信度 0.56 vs 0.55 → zh ✗ 错（期望 en）
+      zh: Plaser that comitenyroun the test.
+      en: Please revert that commit, then rerun the tests.
+  8k  ADPCM 4:1  [179ms] zh 0.34 / en 0.57  无汉字，比置信度 0.34 vs 0.57 → en ✓
+      zh: Please revert tht commitenyoneher test.
+      en: Please revert that commitment and rerun the test.
+
+[lang_en_2] 期望 en  原句: list the changed files and show me the diff
+  16k 无损       [179ms] zh 0.58 / en 0.85  无汉字，比置信度 0.58 vs 0.85 → en ✓
+      zh: List te change files and show me the dif
+      en: List the change files and show me the div.
+  16k ADPCM 4:1  [170ms] zh 0.55 / en 0.78  无汉字，比置信度 0.55 vs 0.78 → en ✓
+      zh: Liste change files and chol me the dif
+      en: List the change files and show me the div.
+  8k  ADPCM 4:1  [174ms] zh 0.57 / en 0.78  无汉字，比置信度 0.57 vs 0.78 → en ✓
+      zh: Liste change files and show me the de.
+      en: List the change files and show me the diff.
+
+判据: 17/18 对；单比置信度会做出一致选择的有 17/18
+
+=== 完 ===

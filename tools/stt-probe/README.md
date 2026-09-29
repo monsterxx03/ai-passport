@@ -1,49 +1,97 @@
-# stt-probe —— 主机侧转写能力的探针
+<p align="right">
+<a href="README.zh_CN.md">简体中文</a> · <strong>English</strong>
+</p>
 
-语音回答那套方案（见 tachi 的 `docs/2026-09-29-badge-voice-answers-design.md`）里，
-**转写发生在主机侧**，用的是 macOS 26 自己的 `Speech.framework`（不走 llm provider、不联网）。
-这个目录是**当初拿来做决定的四轮探针**——设计文档附录 B 里那些数字就是它们跑出来的。
+# stt-probe — host-side transcription probes
 
-留在这里的理由：那些数字是「量出来的」这个说法的唯一凭据。要复现、或者将来系统升级后
-想确认结论还成立，跑一遍就行。
+The badge voice-input design (tachi's `docs/2026-09-29-badge-voice-answers-design.md`) puts
+**transcription on the host**, using macOS 26's own `Speech.framework` (no LLM provider, no
+network). This directory holds **the probes that decided that design** — the numbers in its
+appendix B came from these scripts.
 
-## 怎么跑
+They stay in the tree because they are the only evidence behind the claim "those numbers were
+measured, not guessed". Re-run one to reproduce a result, or to check the conclusions still
+hold after an OS upgrade.
+
+## Running
 
 ```sh
-./run.sh 1      # 轮次见下表；第一次会弹「允许语音识别」，要同意
+./run.sh 1      # round N, see the table below; the first run asks for Speech Recognition
 ```
 
-**必须走 `run.sh`（它会打包成 `.app` 再 `open`）**，不能直接 `swiftc && ./probe`：
-TCC 把语音识别授权归因给 **responsible process**，裸 CLI 的 responsible process 是终端，
-而终端没有 `NSSpeechRecognitionUsageDescription`——判定发生在**第一次调用**时，结果是**直接崩**。
+**It has to go through `run.sh`** (it packages a `.app` and `open`s it); a bare
+`swiftc && ./probe` does NOT work: TCC attributes speech-recognition authorization to the
+**responsible process**, and for a bare CLI that is the terminal — which has no
+`NSSpeechRecognitionUsageDescription`. The verdict happens on the **first call**, and the
+result is a **crash**, not a permission prompt.
 
-跑完日志在 `logs/roundN.log`；`logs/` 里现存的那四份是设计文档定稿时的那次记录。
+Logs land in `logs/roundN.log`; the copies in the tree are from the most recent run.
 
-## 四轮各回答什么
+## What each round answers
 
-| 轮次 | 问题 | 结论（写进了设计文档） |
+| Round | Question | Conclusion (and where it landed) |
 | --- | --- | --- |
-| **1** `round1_assets_and_locales.swift` | 有哪些语言可用、资产装没装、中英混说/双模块各是什么样 | `zh_CN`/`zh_TW` 预装、`en_US` 要下载；**双模块不融合**；`SpeechDetector` 只做 VAD 不判语种 |
-| **2** `round2_bias_and_dictation.swift` | 偏置词表能不能救回英文词、Dictation 味道的转写器是否更合适 | **偏置词表完全无效**（加与不加一字不差）；`DictationTranscriber` 更差 |
-| **3** `round3_controls_and_lossy.swift` | 对照实验：偏置到底有没有用；备选里有什么；ADPCM 往返 | **偏置无效**、备选只是尾部碎片 → 两条自动纠错路都堵死 |
-| **4** `round4_sample_rate_lossy.swift` | 8 kHz 和 ADPCM 4:1 会不会把识别率打下去 | **ADPCM 不会**；**8 kHz 会**——长句上量不出差别，短句上结尾的英文词会整段塌成汉字（`push 到 main` → `通 sh man` / `通知到内`）。所以 16 kHz 是首选，8 kHz 只是带宽不够时的退路 |
+| **1** `round1_assets_and_locales.swift` | which locales exist, are the assets installed, what do mixed zh/en and two modules look like | `zh_CN`/`zh_TW` are preinstalled, `en_US` needs a download; **two modules do not fuse**; `SpeechDetector` is VAD only, it does not identify a language |
+| **2** `round2_bias_and_dictation.swift` | can a bias word list rescue embedded English words, and is the Dictation-flavoured transcriber better | **the bias list does nothing** (identical output with and without it); `DictationTranscriber` is worse |
+| **3** `round3_controls_and_lossy.swift` | controlled experiment: does bias work at all, what is in `alternatives`, ADPCM round trip | **bias is inert**, alternatives are tail fragments only → both automatic correction routes are dead ends |
+| **4** `round4_sample_rate_lossy.swift` | do 8 kHz and ADPCM 4:1 hurt recognition | **ADPCM does not**; **8 kHz does** — indistinguishable on a long sentence, but on a short one the trailing English words collapse into Chinese characters (table 7). So 16 kHz is the default and 8 kHz is only the fallback when bandwidth is short |
+| **5** `round5_language_choice.swift` | is the rule "use zh-CN whenever its output has a Chinese character, otherwise compare confidence" accurate | **17 of 18 correct**; the single miss is an English-only sentence where the two confidences differ by 0.01 (below) — the second layer of the rule is fragile |
+| **6** `round6_streaming_input.swift` | is the no-temp-file path (`AVAudioPCMBuffer` → `AsyncStream<AnalyzerInput>`) equivalent to the file path | **byte-identical output (6/6)**, and 512- vs 1600-sample chunks make no difference → the shim's input can be "`[]int16` plus sample rate", never touching disk |
 
-`adpcm_roundtrip.py` 是标准的 IMA ADPCM 编码→解码往返（4:1），第 3、4 轮都用它模拟
-设备→主机那条有损链路。**它的实现就是设备端 `badge_voice.c` 将来该做的事**——两边各写一遍
-是「协议两端各自实现」的代价，而这份 Python 是最好的参照。
+`adpcm_roundtrip.py` is a standard IMA ADPCM encode→decode round trip (4:1); rounds 3, 4 and 5
+use it to simulate the lossy device→host link. **It does what the device-side `badge_voice.c`
+will have to do** — writing it twice is the price of implementing both ends of a protocol, and
+this Python is the best reference for the second implementation.
 
-## 三个刻意的设计
+## What round 5 turned up: on an English-only sentence the rule can lose by a hair
 
-- **不用麦克风、不用人开口**：句子全部由 `say` 合成（Tingting / Samantha），再过 `afconvert`
-  转成 16 kHz 单声道 Int16（和链路里要传的格式一致）。所以验证可以在没有人的时候跑。
-- **每轮自足**：各自 `say` 合成自己要用的音频，产物写在本目录（`*.wav` / `*.aiff` 不入库）。
-  轮次之间没有依赖，单跑任何一轮都行。
-- **同一段音频的转写是逐次确定的**（第 4 轮每个变体跑 3 遍，输出逐字相同），所以「换一档更好/更差」
-  是真的差别，不是抖动。但换一档音频（比如 8 kHz 无损）就会出现抖动：同一句同一音频三次给出
-  `通 sh man` / `通 sman` / `通 shman`——**抖动本身就是那档质量不行的信号**。
+The design document records "18 of 18 correct" for table 6. Round 5's six sentences were
+reconstructed from that table (which only prints the first half of each sentence), so this is
+not the same audio — but it produced a **failure sample the document does not have**:
 
-## 这四轮**没有**证明的
+```
+please revert that commit and rerun the tests       <- English-only sentence
+  16k ADPCM 4:1   zh 0.56 / en 0.55   no Chinese character, compare confidence -> picked zh (WRONG)
+      zh: Plaser that comitenyroun the test.
+      en: Please revert that commit, then rerun the tests.
+```
 
-**真机麦克风的声学**。`say` 合成的声音比「隔着一张桌子的 MEMS 麦克风 + 房间噪声」干净得多，
-所以上面验的是**管线**（格式、压缩、语言、延迟），不是**声学**。声学那关等设备端能录音之后，
-从电脑喇叭放这些合成音频让设备录一遍——那时才是端到端。
+The two confidences are **almost tied (0.01 apart)**, and the zh-CN string is transliteration
+garbage while the en-US string is the actual sentence. In other words: **the "Chinese character
+first" layer is solid (every Chinese sentence was right); the fragile layer is the second one**
+— on an English-only sentence, "compare confidence" can be won by transliteration. Keep that
+curve in the design: the overwhelmingly likely device input is Chinese, so this cost is
+acceptable, but do not treat the second layer as a reliable rule.
+
+## The trap round 6 hit: do not read a wav into an int16 buffer
+
+The first `readSamples` built a `pcmFormatInt16` `AVAudioPCMBuffer` and called `read(into:)` on
+it directly. The samples came out with **every other one zero** (`[0, -17768, 0, -17704, …]`),
+and audio like that transcribes to a single word — which looks exactly like "the streaming path
+is broken" while the real damage is in reading the file. Five different orderings of the same
+experiment (fill then start, start concurrently, with `bufferStartTime`, one whole buffer,
+`analyzeSequence(stream)`) all produced that same single word, which is what proved the ordering
+was not the problem. The right way: read float32 and quantize to int16 yourself (`AVAudioFile`'s
+processingFormat is float32, and its "helpful" conversion to int16 is not trustworthy).
+
+## Three deliberate choices
+
+- **No microphone, nobody has to speak**: every sentence is synthesized by `say` (Tingting /
+  Samantha) and converted by `afconvert` to 16 kHz mono Int16 (the format the link will carry).
+  So the checks run when nobody is around.
+- **Each round is self-contained**: every round synthesizes its own audio and writes its
+  artifacts into this directory (`*.wav` / `*.aiff` are not committed). There are no
+  dependencies between rounds; any round can be run on its own.
+- **Transcription of a given clip is repeatable** (round 4 ran each variant 3 times with
+  byte-identical output), so "one setting is better/worse" is a real difference, not jitter.
+  Changing the audio, though, does introduce jitter: the same sentence at 8 kHz lossless gave
+  three different endings across three runs — and that jitter is itself the signal that the
+  setting is not good enough.
+
+## What these rounds do NOT prove
+
+**The acoustics of the real microphone.** `say` output is much cleaner than "a MEMS microphone
+across a desk in a noisy room", so what is verified above is the **pipeline** (format,
+compression, language, latency), not the **acoustics**. That last step needs the device side to
+record: play these synthesized clips from the laptop and let the device record them — only then
+is it end to end.

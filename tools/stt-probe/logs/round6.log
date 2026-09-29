@@ -1,0 +1,26 @@
+=== 第六轮：流式入口（不落盘那条路）===
+音频: round6_long.wav  11.2s / 16000 Hz / 单声道 Int16，共 179258 样本
+
+[文件模式 · 基线] analyzeSequence(from: AVAudioFile)
+  #1 [858ms]（进程内首次调用，含冷启动） → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  #2 [223ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+
+[流式] AVAudioPCMBuffer → AsyncStream<AnalyzerInput> → start(inputSequence:) → finalizeAndFinishThroughEndOfInput()
+  每块 512 样本 #1 [217ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  每块 512 样本 #2 [216ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  每块 512 样本 #3 [225ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  每块 1600 样本 #1 [209ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  每块 1600 样本 #2 [206ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  每块 1600 样本 #3 [217ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+
+[逐字比较] 流式 vs 文件模式基线
+  每块 512 样本 #1：逐字一致 ✓
+  每块 512 样本 #2：逐字一致 ✓
+  每块 512 样本 #3：逐字一致 ✓
+  每块 1600 样本 #1：逐字一致 ✓
+  每块 1600 样本 #2：逐字一致 ✓
+  每块 1600 样本 #3：逐字一致 ✓
+  6/6 与基线逐字一致
+  块大小 512 vs 1600：结果无差别 ✓
+
+=== 完 ===

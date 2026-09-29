@@ -9,7 +9,7 @@
 # 用法：./run.sh 1      # 轮次见 README.md
 set -euo pipefail
 
-ROUND="${1:?用法: ./run.sh <1|2|3|4>}"
+ROUND="${1:?用法: ./run.sh <轮次，1..6，见 README.md>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE/$(cd "$HERE" && ls round${ROUND}_*.swift)"
 NAME="SttProbe${ROUND}"
