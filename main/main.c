@@ -28,6 +28,7 @@
 #include "badge_link.h"
 #include "badge_power.h"
 #include "badge_proto.h"
+#include "badge_sound.h"
 #include "badge_state.h"
 #include "badge_ui.h"
 #include "bsp_battery.h"
@@ -520,6 +521,12 @@ static void badge_task(void *argument)
                 dirty = true;
             }
         }
+        // 提示音：一条「该响一声」的新等待到了。判定是状态机做的（纯逻辑、有主机测试），
+        // 这里只消费那一次性的标志并把它变成声音——响不响不在这里判断。
+        if (s_state.alert_pending) {
+            s_state.alert_pending = false;
+            badge_sound_play();
+        }
         if (dirty) {
             render();
         }
@@ -557,6 +564,10 @@ void app_main(void)
         // BLE 起不来不该拦住串口那条（反之亦然）：两条都是可选的。
         ESP_LOGW(TAG, "BLE 链路未能启动");
     }
+
+    // 提示音：起播放任务并初始化 codec（初始化完就送去睡眠，只在响的时候唤醒）。
+    // 同样地，它起不来只记一行日志——这条链路上的每一部分都是可选的。
+    badge_sound_init();
 
     s_line_queue = xQueueCreate(BADGE_LINE_QUEUE_DEPTH, sizeof(badge_line_t));
     s_key_queue = xQueueCreate(BADGE_KEY_QUEUE_DEPTH, sizeof(badge_key_event_t));

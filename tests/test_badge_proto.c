@@ -344,6 +344,21 @@ static void test_encoding_refuses_a_partial_message(void)
     assert(buffer[0] == '\0');
 }
 
+// 「该响一声」是主机发来的一个可选字段：它才知道自己在不在前台、用户正在看哪个会话。
+// 老主机（或老版本的协议）不带这个字段 —— 那就**不响**，设备不替主机猜。
+static void test_alert_flag(void)
+{
+    assert(parse("{\"t\":\"ask\",\"seq\":9,\"ref\":9,\"kind\":\"permission\",\"session\":\"s1\","
+                 "\"alert\":true,\"body\":\"$ ls\","
+                 "\"options\":[{\"label\":\"允许\",\"value\":\"allow_once\"}]}"));
+    assert(message.alert);
+
+    assert(parse("{\"t\":\"ask\",\"seq\":10,\"ref\":10,\"kind\":\"permission\",\"session\":\"s1\","
+                 "\"body\":\"$ ls\","
+                 "\"options\":[{\"label\":\"允许\",\"value\":\"allow_once\"}]}"));
+    assert(!message.alert);
+}
+
 int main(void)
 {
     test_state();
@@ -363,6 +378,7 @@ int main(void)
     test_encoding();
     test_question_answer_round_trip();
     test_encoding_refuses_a_partial_message();
+    test_alert_flag();
     printf("test_badge_proto: OK\n");
     return 0;
 }

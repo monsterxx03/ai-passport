@@ -39,6 +39,16 @@ static unsigned long take_ulong(const bjson_val_t *obj, const char *key)
     return number < 0L ? 0UL : (unsigned long)number;
 }
 
+static bool take_bool(const bjson_val_t *obj, const char *key)
+{
+    bjson_val_t value;
+
+    if (!bjson_obj_get(obj, key, &value)) {
+        return false; // 缺字段 = 关（老主机不带这个字段）
+    }
+    return bjson_bool(&value, false);
+}
+
 static void take_options(const bjson_val_t *owner, badge_option_t *options, size_t *count,
                          size_t max, size_t *total)
 {
@@ -184,6 +194,9 @@ static bool parse_ask(const bjson_val_t *root, badge_msg_t *out)
     }
     (void)take_string(root, "title", out->title, sizeof(out->title));
     (void)take_string(root, "session", out->session, sizeof(out->session));
+    // 主机说这条等待值得响一声：它知道自己在不在前台、用户正在看哪个会话（见 tachi
+    // 的 registerAsk）。设备不判断这件事——它只有这两条信息里的零条。
+    out->alert = take_bool(root, "alert");
 
     if (strcmp(kind, "ask_user") == 0) {
         out->ask_kind = BADGE_ASK_QUESTIONS;

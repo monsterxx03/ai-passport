@@ -10,9 +10,11 @@ idf_component_register(
          "badge_ble.c"
          "badge_state.c"
          "badge_power.c"
+         "badge_sound.c"
          "badge_ui.c"
          "badge_font_16.c"
          "badge_font_icon_16.c"
+         "badge_sound_16k.c"
          "badge_avatar.c"
     INCLUDE_DIRS "."
     REQUIRES bsp esp_driver_usb_serial_jtag esp_timer lvgl nvs_flash bt

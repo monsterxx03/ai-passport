@@ -109,6 +109,9 @@ typedef struct {
     unsigned long ref; // 本次连接内的行号，回答时原样带回
     char session[BADGE_TEXT_MAX]; // 哪个会话在等：状态屏据此把那一行挑出来显示
     badge_ask_kind_t ask_kind;
+    // alert 是主机对这条等待的判断：「值得响一声」（它不在前台，或者等的不是当前
+    // 活跃会话——见 tachi 的 registerAsk）。设备只照做，不自己判断这件事。
+    bool alert;
     char title[BADGE_TITLE_MAX];
     char body[BADGE_BODY_MAX]; // 权限：预览文本；提问：不用
     size_t option_count;

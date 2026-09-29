@@ -49,6 +49,11 @@ typedef struct {
     char notice[BADGE_DETAIL_MAX];
     uint32_t notice_deadline;
     uint32_t now;
+
+    // 有没有一条「该响一声」的等待还没被处理。一次性：由调用方（main 的循环）消费，
+    // 它决定响不响（见 badge_sound）。放在这里而不是直接放声音，是因为「什么时候该响」
+    // 是**状态**（新出现的等待才算），而状态机是纯逻辑、能在主机上测。
+    bool alert_pending;
 } badge_state_t;
 
 void badge_state_init(badge_state_t *state);

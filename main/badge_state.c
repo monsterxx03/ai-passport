@@ -124,6 +124,11 @@ static bool push_ask(badge_state_t *state, const badge_msg_t *message)
         reset_cursor(state);
     }
     disclose_dropped_questions(state, message);
+    // 「该响一声」只在这条路径（**新出现**的等待）上置位：同一条 ask 会被主机的心跳
+    // 每 10 秒重发一次，跟着重发走就成了每 10 秒响一次。
+    if (message->alert) {
+        state->alert_pending = true;
+    }
     return true;
 }
 
