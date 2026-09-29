@@ -182,6 +182,12 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
             // 双击确定：看一眼当前会话的账（模型、上下文、花费）。双击在三个键上本来都
             // 空着，而这一件事值得一个手势——它是你在设备旁边最想知道的那个数。
             queued.key = BADGE_KEY_INFO;
+        } else if (event == BSP_BTN_PRESS) {
+            // 按住说话：**按下**和**松开**都要送进队列（见 handle_key 的 TALK 分支）。
+            // 缺了任何一个，录着的那一段就没人收尾。
+            queued.key = BADGE_KEY_TALK_START;
+        } else if (event == BSP_BTN_RELEASE) {
+            queued.key = BADGE_KEY_TALK_END;
         } else {
             return;
         }
@@ -345,15 +351,19 @@ static bool handle_line(const badge_line_t *line)
     return badge_state_apply(&s_state, &s_message) || !was_connected;
 }
 
-// 主屏长按确定 = 说话。按一次开始录、再按一次结束并发送（见 badge_voice_toggle）。
+// 按住确定 = 说话（设计文档 §3 的首选）：按下开始录、**松开就发**，全程录着。两个事件
+// 都走这里——按下被丢掉的话，录着的那一段就没有人来收尾了。
 //
 // 每一次按键都在屏幕上留一句话：录音跑在 badge_voice 自己的任务里，而状态机只由 app 任务
-// 碰——没有这句话，用户按下去之后屏幕上是静止的，看起来就像按键坏了。
-static void handle_voice_key(void)
+// 碰——没有这句话，用户按下去之后屏幕上是静止的，看起来就像按键坏了。太短的那些是例外
+// （见下面那个 case）：双击确定（看账）就是两次短按，那里一冒字就会盖住用户真正在做的事。
+static void handle_voice_key(bool pressed)
 {
-    switch (badge_voice_toggle()) {
+    const badge_voice_action_t action = pressed ? badge_voice_start() : badge_voice_finish();
+
+    switch (action) {
     case BADGE_VOICE_ACTION_STARTED:
-        badge_state_notice(&s_state, "录音中…再长按结束", BADGE_VOICE_MAX_MS);
+        badge_state_notice(&s_state, "录音中…松手发送", BADGE_VOICE_MAX_MS);
         break;
     case BADGE_VOICE_ACTION_STOPPED:
         // 结束时**不要**立刻说「已发送」：那一片片还在路上（实测 6 秒的语音要 3-4 秒传
@@ -364,13 +374,17 @@ static void handle_voice_key(void)
         badge_state_notice(&s_state, "上一条还在发", 3000U);
         break;
     case BADGE_VOICE_ACTION_NO_AUDIO:
-    default:
         badge_state_notice(&s_state, "音频起不来", 4000U);
+        break;
+    case BADGE_VOICE_ACTION_TOO_SHORT:
+    case BADGE_VOICE_ACTION_NONE:
+    default:
+        // 太短（双击那两下）和「松开时根本没在录」都不说话。
         break;
     }
 }
 
-// 状态屏上的**长按上** = 忘记配对的电脑（长按确定让位给了「说话」，见 handle_key）。
+// 状态屏上的**长按上** = 忘记配对的电脑（长按确定让位给了「按住说话」，见 handle_key）。
 //
 // 为什么要按两次：这是个不可逆的动作，而且它**只做了一半**——本机忘掉之后，电脑
 // 那边还留着它那一份 bond，于是之后会「连上即断」而且不会重新配对（macOS 的实测
@@ -418,30 +432,45 @@ static void handle_key(const badge_key_event_t *event)
         return;
     }
 
-    // 录音中短按确定 = 丢弃这一段（手滑了不用发上去）。它排在最前面：录音时屏幕上显示
-    // 的是倒计时，那一刻「确定」只该有这一个含义，别的路由都该让路。
-    if (event->key == BADGE_KEY_OK && badge_voice_progress(NULL, NULL)) {
+    // 按住确定 = 说话（设计文档 §3 的首选，见 handle_voice_key）：**按下**那一下开始录，
+    // **松开**那一下结束并发送。它排在最前面，因为按住这段横跨好几次按键，中途别的路由
+    // 都该给它让路。
+    //
+    // 松开必须无条件走这条路：按下时允许录，中途来了一条待答项之后，松开这一下不能被
+    // 「现在在待答屏上」挡掉——否则那一段就没人收尾，得等到 30 秒上限自己停。
+    if (event->key == BADGE_KEY_TALK_END) {
+        handle_voice_key(false);
+        return;
+    }
+    if (event->key == BADGE_KEY_TALK_START) {
+        // 待答屏上「确定」的意思是提交、配对时屏幕上是那 6 位码：这两种处境下按住确定
+        // 不该顺手录走一段话（用户是在答题/配对，不是在说话）。
+        if (s_state.ask_count == 0U && badge_ble_state() != BADGE_BLE_PAIRING) {
+            handle_voice_key(true);
+        }
+        return;
+    }
+
+    // 录音中上键 = 丢弃这一段（说错了、手滑了）。它排在「长按上 = 忘记电脑」之前：录音
+    // 时那一按的意思是「不要这段」，而不是「把电脑忘掉」。
+    if (badge_voice_progress(NULL, NULL) &&
+        (event->key == BADGE_KEY_UP || event->key == BADGE_KEY_PREV)) {
         badge_voice_cancel();
         badge_state_notice(&s_state, "已取消", 2500U);
         return;
     }
 
-    // 主屏（没有等待项）上的两个长按。判据用 ask_count 而不是「界面正在显示哪一屏」
-    // ——状态机不知道界面在显示什么，而「没有等待项」恰好就是「它没停在待答屏上」：
+    // 主屏（没有等待项）上剩下的那个长按：
     //
-    //   长按确定 —— 说话：第一次按开始录，再按一次结束并发送（见 handle_voice_key）
-    //   长按上   —— 忘记配对的电脑（原先在长按确定上，让位给了上面那个）
+    //   长按上 —— 忘记配对的电脑
     //
-    // 配对进行中两个都不做：屏幕上此刻是那 6 位码，用户可能只是想把屏幕点亮，
-    // 不该因此把这次配对搅黄、也不该误录一段音。
-    if (s_state.ask_count == 0U &&
-        (event->key == BADGE_KEY_SUBMIT || event->key == BADGE_KEY_PREV)) {
+    // （「说话」不在这份名单里了：它是按下/松开这一对，见上面的 TALK 分支。）
+    //
+    // 配对进行中不做：屏幕上此刻是那 6 位码，用户可能只是想把屏幕点亮，不该因此把这次
+    // 配对搅黄。
+    if (s_state.ask_count == 0U && event->key == BADGE_KEY_PREV) {
         if (badge_ble_state() != BADGE_BLE_PAIRING) {
-            if (event->key == BADGE_KEY_SUBMIT) {
-                handle_voice_key();
-            } else {
-                handle_forget(now_ms());
-            }
+            handle_forget(now_ms());
         }
         return;
     }
@@ -553,6 +582,7 @@ static void badge_task(void *argument)
 
             if (badge_voice_take_report(&report)) {
                 char text[BADGE_DETAIL_MAX];
+                bool show = true;
 
                 switch (report.outcome) {
                 case BADGE_VOICE_NO_AUDIO:
@@ -560,6 +590,11 @@ static void badge_task(void *argument)
                     break;
                 case BADGE_VOICE_SEND_FAILED:
                     (void)snprintf(text, sizeof(text), "发送失败（链路不在？）");
+                    break;
+                case BADGE_VOICE_TOO_SHORT:
+                    // 太短的「按住」静默收尾：双击确定（看账）就是两次短按，这里一冒字
+                    // 就会盖住用户真正在做的那件事（见 badge_voice.h 的 BADGE_VOICE_MIN_MS）。
+                    show = false;
                     break;
                 case BADGE_VOICE_CANCELLED:
                     // 按键那条已经说过一次「已取消」，这里再来一句是给它一个确定的收尾
@@ -591,8 +626,10 @@ static void badge_task(void *argument)
                     }
                     break;
                 }
-                badge_state_notice(&s_state, text, 6000U);
-                dirty = true;
+                if (show) {
+                    badge_state_notice(&s_state, text, 6000U);
+                    dirty = true;
+                }
             }
         }
 

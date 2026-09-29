@@ -9,10 +9,6 @@
 // 也不分配内存——所以它能在主机上被完整测试（tests/test_badge_voice.c）。真机上最难
 // 查的正是编码本身：base64 的补位、最后一片不满、缓冲正好差一个字节。这些在主机上
 // 都能试出来，而烧一次板子的代价比它大得多。
-//
-// 现在是 P0 的样子：数据源是一段**假装的**音频（见 main.c 的吐数据任务），而路径
-// （分片 → base64 → send_line → BLE notify）与将来从麦克风采到的完全一样。所以它量
-// 出来的吞吐就是语音上传的吞吐。
 #pragma once
 
 #include <stdbool.h>
@@ -54,8 +50,18 @@ size_t badge_voice_base64(char *out, size_t cap, const void *data, size_t length
 
 // 采集上限。到点自动停并发送——不让人录到链路塞满才发现。30 秒 = 240 KB（16 kHz
 // ADPCM 是 8 KB/s），按实测 13 KB/s 的链路算约 18 秒传完——而且它是**边录边传**的，
-// 所以按下结束之后剩下的通常只有最后几片。
+// 所以松开之后剩下的通常只有最后几片。
 #define BADGE_VOICE_MAX_MS 30000U
+// 短于这个长度的「按住」不当一段话：不发、也不报。
+//
+// 手势是**按住说话**（按下开始录、松开发送，见 badge_voice_start/finish），于是每一次
+// 按下都会开始一段录音——包括双击确定（看账）那两次短按。所以太短的那些必须既不占链路
+// 也不在屏幕上刷字（见 main.c 的 handle_voice_key）：双击的那两下会各自留下一句提示，
+// 而用户的本意是「看一眼账」。
+//
+// 400ms 的依据是 BSP 的长按阈值（BSP_BTN_LONG_PRESS_MS，500ms）：真正的「按住」不会比它
+// 短，比它短的那些本来就是点一下。
+#define BADGE_VOICE_MIN_MS 400U
 // 采样率。ADPCM 是 4 bit/采样，所以 16 kHz 对应 8 KB/s——设计文档 §4 量出来的首选档
 // （8 kHz 也够带宽，但短句上的英文词会塌成汉字，见那张表）。
 #define BADGE_VOICE_HZ 16000U
@@ -69,10 +75,12 @@ size_t badge_voice_base64(char *out, size_t cap, const void *data, size_t length
 // 一行怎么发出去由调用方给（main.c 的 send_line 知道该走串口还是 BLE）。
 typedef bool (*badge_voice_send_fn)(const char *line, size_t length, void *context);
 
-// 一次按键（主屏长按确定）做完的那件事。
+// 一次「按下 / 松开」做完的那件事。
 typedef enum {
-    BADGE_VOICE_ACTION_STARTED = 0, // 开始录
-    BADGE_VOICE_ACTION_STOPPED,     // 提前结束，正在发
+    BADGE_VOICE_ACTION_STARTED = 0, // 按下：开始录
+    BADGE_VOICE_ACTION_STOPPED,     // 松开：结束并发送
+    BADGE_VOICE_ACTION_TOO_SHORT,   // 松开时还没够 BADGE_VOICE_MIN_MS：整段丢掉，不发
+    BADGE_VOICE_ACTION_NONE,        // 松开时根本没在录（按下被别的屏吃掉了 / 已经自动停了）
     BADGE_VOICE_ACTION_BUSY,        // 上一次还在发（或 codec 被提示音占着）
     BADGE_VOICE_ACTION_NO_AUDIO,    // 音频没起来，录不了
 } badge_voice_action_t;
@@ -83,6 +91,7 @@ typedef enum {
     BADGE_VOICE_NO_AUDIO,     // codec 起不来
     BADGE_VOICE_SEND_FAILED,  // 连 begin/end 都发不出去（链路不在）
     BADGE_VOICE_CANCELLED,    // 录到一半被丢弃：已经发出去的片作废，主机那边也作废
+    BADGE_VOICE_TOO_SHORT,    // 按太短了（连 voice_begin 都没发出去）：屏幕上不提
 } badge_voice_outcome_t;
 
 typedef struct {
@@ -100,8 +109,19 @@ typedef struct {
 // badge_voice_init 记住出口并准备一次录音所需的状态（app_main 调一次）。
 void badge_voice_init(badge_voice_send_fn send, void *context);
 
-// badge_voice_toggle 一次按键：空闲就开始录，录着就停并把这段发上去。
-badge_voice_action_t badge_voice_toggle(void);
+// badge_voice_start 按下确定：开始录。手势是**按住说话**（设计文档 §3 的首选）：
+// 按下开始、松开发送，中间一直录着。
+//
+// 忙的时候（上一次还在发、或提示音占着 codec）返回 BUSY，什么都不做——提示音那段很短，
+// 让用户松手再按一次比抢 codec 好（格式互踩是这条路上最容易出错的地方，见设计文档 §8）。
+badge_voice_action_t badge_voice_start(void);
+
+// badge_voice_finish 松开确定：结束并把这一段发上去。
+//
+// 不足 BADGE_VOICE_MIN_MS 的按住返回 TOO_SHORT，整段丢掉（连 voice_begin 都不发）。
+// 没在录时是个空操作——这样调用方不必先问再调（松开事件和「录音已经因为到上限自己停了」
+// 会同时发生）。
+badge_voice_action_t badge_voice_finish(void);
 
 // badge_voice_take_report 取走一次录音的结果（由 app 任务调，取到就显示在屏幕上）。
 // 采集与编码跑在别的任务里，所以结果只**在这里**交给状态机——状态机只由 app 任务碰。

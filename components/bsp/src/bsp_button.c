@@ -75,7 +75,8 @@ static void on_event(void *arg, void *usr_data, bsp_btn_ev_t ev) {
     if (!s_ready || !s_cb) return;
     s_cb((bsp_btn_t)(intptr_t)usr_data, ev, s_user);
 }
-static void cb_press (void *a, void *u) { on_event(a, u, BSP_BTN_PRESS);  }
+static void cb_press  (void *a, void *u) { on_event(a, u, BSP_BTN_PRESS);  }
+static void cb_release(void *a, void *u) { on_event(a, u, BSP_BTN_RELEASE); }
 static void cb_click (void *a, void *u) { on_event(a, u, BSP_BTN_CLICK);  }
 static void cb_double(void *a, void *u) { on_event(a, u, BSP_BTN_DOUBLE); }
 static void cb_long  (void *a, void *u) { on_event(a, u, BSP_BTN_LONG);   }
@@ -117,6 +118,7 @@ static void button_cleanup(void) {
 
 static esp_err_t register_callbacks(button_handle_t button, void *index) {
     esp_err_t e = iot_button_register_cb(button, BUTTON_PRESS_DOWN, NULL, cb_press, index);
+    if (e == ESP_OK) e = iot_button_register_cb(button, BUTTON_PRESS_UP, NULL, cb_release, index);
     if (e == ESP_OK) e = iot_button_register_cb(button, BUTTON_SINGLE_CLICK, NULL, cb_click, index);
     if (e == ESP_OK) e = iot_button_register_cb(button, BUTTON_DOUBLE_CLICK, NULL, cb_double, index);
     if (e == ESP_OK) e = iot_button_register_cb(button, BUTTON_LONG_PRESS_START, NULL, cb_long, index);

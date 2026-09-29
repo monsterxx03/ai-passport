@@ -87,9 +87,8 @@ static void voice_task(void *argument)
     (void)argument;
 
     report.outcome = BADGE_VOICE_OK;
-    s_record_started_ms = now_ms();
     // codec 平时睡着（提示音那条留下的约定），这里唤醒并设成录音要的格式。与提示音
-    // 播放之间的互斥见 badge_voice_toggle 与 badge_sound 里那两处检查。
+    // 播放之间的互斥见 badge_voice_start 与 badge_sound 里那两处检查。
     if (bsp_audio_wake() != ESP_OK ||
         bsp_audio_set_format(BADGE_VOICE_HZ, 16U, 1U) != ESP_OK) {
         ESP_LOGW(TAG, "codec 起不来，这次录音作废");
@@ -179,7 +178,11 @@ done:
     // 时长按**采到的采样数**算，不按墙钟：调度抖动不该混进「录了多久」。
     report.ms = (uint32_t)((uint64_t)frames * BADGE_VOICE_FRAME_SAMPLES * 1000ULL / BADGE_VOICE_HZ);
     if (s_cancel) {
-        report.outcome = BADGE_VOICE_CANCELLED;
+        // 太短的按住不算「取消」：里面混着双击确定（看账）那两下短按，屏幕上不该因此
+        // 冒字（见 badge_voice.h 的 BADGE_VOICE_MIN_MS）。用户自己按上键取消的长按照旧
+        // 报「已取消」。
+        report.outcome = (report.ms < BADGE_VOICE_MIN_MS) ? BADGE_VOICE_TOO_SHORT
+                                                          : BADGE_VOICE_CANCELLED;
     }
     report.parts_sent = sent;
     report.parts_failed = failed;
@@ -201,27 +204,25 @@ void badge_voice_init(badge_voice_send_fn send, void *context)
     s_send_context = context;
 }
 
-badge_voice_action_t badge_voice_toggle(void)
+badge_voice_action_t badge_voice_start(void)
 {
     if (s_busy) {
-        if (s_recording) {
-            // 再按一次（主屏长按确定）＝ 提前结束并发送。这就是这一版的手势：**长按
-            // 开始、再长按结束**，上限自动停。设计文档 §3 的首选是「按住说话」，
-            // 但那要靠轮询 ADC 判松手——先把手感之外的东西都跑通，再决定值不值得换。
-            s_stop = true;
-            return BADGE_VOICE_ACTION_STOPPED;
-        }
-        return BADGE_VOICE_ACTION_BUSY; // 上一次还在发
+        return BADGE_VOICE_ACTION_BUSY; // 上一次还在发（或上一段还在收尾）
     }
     if (badge_sound_busy()) {
         // 提示音此刻占着 codec，而格式互踩是这件事里最容易出错的地方（设计文档 §8：
-        // BSP 要求调用方串行化格式与休眠）。那一两声很短，让用户再按一次比抢 codec 好。
+        // BSP 要求调用方串行化格式与休眠）。那一两声很短，让用户松手再按一次比抢
+        // codec 好。
         return BADGE_VOICE_ACTION_BUSY;
     }
     s_stop = false;
     s_cancel = false;
     s_recording = true;
     s_busy = true;
+    // 计时从**按下**这一下开始，而不是采集任务真正跑起来那一刻：屏幕上那个倒计时
+    // 该跟着手指走，而 badge_voice_finish 判「太短」用的也是同一个起点（差几毫秒的
+    // 话，一次刚好卡在门限上的按住会被判成短按）。
+    s_record_started_ms = now_ms();
     if (xTaskCreate(voice_task, "badge_voice", VOICE_TASK_STACK, NULL, VOICE_TASK_PRIORITY, NULL) !=
         pdPASS) {
         s_recording = false;
@@ -229,6 +230,23 @@ badge_voice_action_t badge_voice_toggle(void)
         return BADGE_VOICE_ACTION_NO_AUDIO;
     }
     return BADGE_VOICE_ACTION_STARTED;
+}
+
+badge_voice_action_t badge_voice_finish(void)
+{
+    if (!s_recording) {
+        // 松开这一下总会有，包括「录音已经因为到上限自己停了」和「按下被别的屏吃掉了」
+        // 那两种情况——没在录就当没发生，调用方不必先问再调。
+        return BADGE_VOICE_ACTION_NONE;
+    }
+    if (now_ms() - s_record_started_ms < BADGE_VOICE_MIN_MS) {
+        // 太短的按住：整段作废。已经发出去的 begin（和头几片）由收尾那条 parts=0 的
+        // end 一起作废——主机按片数对账，看到的是一段对不上账的音频。
+        s_cancel = true;
+        return BADGE_VOICE_ACTION_TOO_SHORT;
+    }
+    s_stop = true;
+    return BADGE_VOICE_ACTION_STOPPED;
 }
 
 bool badge_voice_take_report(badge_voice_report_t *out)
