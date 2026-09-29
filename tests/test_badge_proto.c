@@ -390,12 +390,12 @@ static void test_voice_text(void)
 static void test_info(void)
 {
     assert(parse("{\"t\":\"info\",\"seq\":42,\"title\":\"修 lint\",\"model\":\"gpt-5\","
-                 "\"context\":\"12.3k / 32k (39%)\",\"cost\":\"$0.42\"}"));
+                 "\"context\":\"12.3k / 32k (39%)\",\"cost\":\"¥0.420\"}"));
     assert(message.kind == BADGE_MSG_INFO);
     assert(strcmp(message.info.title, "修 lint") == 0);
     assert(strcmp(message.info.model, "gpt-5") == 0);
     assert(strcmp(message.info.context, "12.3k / 32k (39%)") == 0);
-    assert(strcmp(message.info.cost, "$0.42") == 0);
+    assert(strcmp(message.info.cost, "¥0.420") == 0);
 
     // 没有活跃会话时主机只给一个 title，其余为空——那几行不画，而不是拿上一屏的残渣。
     assert(parse("{\"t\":\"info\",\"title\":\"（没有活跃会话）\"}"));
