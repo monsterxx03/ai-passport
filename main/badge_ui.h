@@ -51,6 +51,10 @@ typedef struct {
 
     // 一次性提示：回答已发出、主机拒绝了回答、这个问题要在电脑上答。
     const char *notice;
+
+    // 屏幕（背光）此刻亮不亮。界面唯一需要它的地方是「选中的那一行要不要跑马灯」：
+    // 熄灭的屏幕背后还在动的动画纯粹是在烧电，而它还会让 LVGL 任务一直重绘。
+    bool screen_on;
 } badge_ui_snapshot_t;
 
 // badge_ui_init 建好对象树并停在状态屏。必须在 LVGL 初始化之后、持锁调用。

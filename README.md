@@ -32,6 +32,11 @@ an ask is pending**; after it blanks, any button lights it immediately, and that
 it (on a dark screen you cannot see where the cursor is, so it must not submit anything). A new ask,
 or the link dropping, lights it too.
 
+An option that does not fit is no longer just cut off: the **selected row** scrolls horizontally to
+show the whole label while the others stay dotted. Only the selected row moves because five rows
+scrolling at once are unreadable, and the animation stops when the screen blanks — text moving
+behind a dark screen only burns power.
+
 ## How it talks to the computer
 
 One USB serial line (the ESP32-C3's USB-Serial-JTAG), line-delimited JSON, every line prefixed

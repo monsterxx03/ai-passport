@@ -174,6 +174,8 @@ static void render(void)
 {
     badge_state_to_ui(&s_state, &s_snapshot);
     s_snapshot.battery_percent = s_battery_percent;
+    // 界面据此决定「选中那一行要不要跑马灯」：熄屏时停掉动画。
+    s_snapshot.screen_on = s_power.screen_on;
 
     // LVGL 不是线程安全的：这一屏的每一次修改都要在锁里。拿不到锁就跳过这一帧，
     // 下一轮再画——为了一帧画面去等，会把按键的响应一起拖住。
@@ -372,6 +374,9 @@ static void badge_task(void *argument)
             }
             if (flip) {
                 apply_backlight();
+                // 屏幕状态变了要重画一次：熄灭时这一帧会把跑马灯停掉（黑屏背后的动画
+                // 只是在烧电），亮起来时把选中那一行重新滚动起来。
+                dirty = true;
             }
         }
         if (dirty) {

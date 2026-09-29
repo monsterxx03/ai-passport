@@ -84,14 +84,14 @@ static lv_obj_t *make_label(lv_obj_t *parent, uint32_t color)
 
 // one_line 把 label 约束成「一行，超出打点」。
 //
-// 光设宽度不够：LVGL 的 LV_LABEL_LONG_DOT 是「先按对象尺寸换行，再在最后一行打点」，
-// 高度不定死就会撑出第二行，压到下面那一行上去——这块屏上相邻元素只隔 24px（选项之间
-// 甚至贴身），两行文本必然重叠。
+// 光设宽度不够：LVGL 的 LV_LABEL_LONG_MODE_DOTS 是「先按对象尺寸换行，再在最后一行
+// 打点」，高度不定死就会撑出第二行，压到下面那一行上去——这块屏上相邻元素只隔 24px
+// （选项之间甚至贴身），两行文本必然重叠。
 static void one_line(lv_obj_t *label, int width, bool centered)
 {
     lv_obj_set_width(label, width);
     lv_obj_set_height(label, (int32_t)badge_font_16.line_height);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
     if (centered) {
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     }
@@ -103,7 +103,24 @@ static void at_most_lines(lv_obj_t *label, int width, int lines)
 {
     lv_obj_set_width(label, width);
     lv_obj_set_height(label, (int32_t)badge_font_16.line_height * lines);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+}
+
+// 跑马灯速度（px/s）。它填进的是样式的 anim_duration——在 LVGL 9.5 里那个样式承载
+// 的是**速度**（LVGL 自己就这么用：把速度与时长上下限编码进一个值），不是一趟的毫秒
+// 数。默认 40 对这块小屏偏慢，长一点的选项要等好几秒才滚完。
+#define MARQUEE_SPEED_PX_S 60
+
+// marquee 让一行文字横向循环滚动，只用在**选中的那一行**上：五个选项同时滚会谁也看
+// 不清，而黄色高亮就是「你在看这一行」。文字放得下时 LVGL 不会启动动画。
+static void marquee(lv_obj_t *label, bool on)
+{
+    if (on) {
+        lv_obj_set_style_anim_duration(label,
+                                       lv_anim_speed_clamped(MARQUEE_SPEED_PX_S, 300, 10000), 0);
+    }
+    lv_label_set_long_mode(label,
+                           on ? LV_LABEL_LONG_MODE_SCROLL_CIRCULAR : LV_LABEL_LONG_MODE_DOTS);
 }
 
 static void build_status_screen(void)
@@ -328,10 +345,13 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
     if (questions && question != NULL && question->option_count == 0U) {
         lv_obj_remove_flag(s_ak_options[0], LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(s_ak_labels[0], "需要在电脑上回答");
+        marquee(s_ak_labels[0], false);
         lv_obj_set_style_bg_opa(s_ak_options[0], LV_OPA_TRANSP, 0);
         lv_obj_set_style_text_color(s_ak_labels[0], lv_color_hex(COL_ACCENT), 0);
         for (i = 1; i < BADGE_MAX_OPTIONS; ++i) {
             lv_obj_add_flag(s_ak_options[i], LV_OBJ_FLAG_HIDDEN);
+            // 藏起来的行也要退出跑马灯：看不见的动画照样让 LVGL 一直重绘。
+            marquee(s_ak_labels[i], false);
         }
         lv_label_set_text(s_ak_footer, "这题要用文字回答");
         return;
@@ -344,6 +364,7 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
 
         if (i >= count) {
             lv_obj_add_flag(s_ak_options[i], LV_OBJ_FLAG_HIDDEN);
+            marquee(s_ak_labels[i], false); // 看不见的动画也在让 LVGL 一直重绘
             continue;
         }
         lv_obj_remove_flag(s_ak_options[i], LV_OBJ_FLAG_HIDDEN);
@@ -369,6 +390,9 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
             lv_obj_set_style_bg_opa(s_ak_options[i], LV_OPA_TRANSP, 0);
             lv_obj_set_style_text_color(s_ak_labels[i], lv_color_hex(COL_TEXT), 0);
         }
+        // 只有选中的那一行滚：放得下时 LVGL 不启动动画，短选项不受影响。
+        // 熄屏时必须停掉——屏幕黑着还在滚的动画纯属烧电。
+        marquee(s_ak_labels[i], i == snapshot->selection && snapshot->screen_on);
     }
 
     // 底栏：先报按键，再报其它。题号不在这里重复——标题写成「(1/2) 主题」，
