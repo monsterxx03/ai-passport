@@ -409,7 +409,7 @@ sudo usermod -aG dialout "${USER}"
 
 ```bash
 python -m esptool --chip esp32c3 -p <port> -b 460800 \
-    write-flash 0x0 build/FoloToy-AI-Passport-full.bin
+    write_flash 0x0 build/FoloToy-AI-Passport-full.bin
 idf.py -p <port> monitor
 ```
 

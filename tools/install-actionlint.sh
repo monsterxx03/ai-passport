@@ -49,14 +49,32 @@ if ! curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
     gh release download "v${version}" --repo rhysd/actionlint \
         --pattern "${archive_name}" --dir "${destination}"
 fi
-if command -v sha256sum >/dev/null 2>&1; then
-    printf '%s  %s\n' "${checksum}" "${archive_path}" | sha256sum --check --status
-elif command -v shasum >/dev/null 2>&1; then
-    [[ "$(shasum -a 256 "${archive_path}" | awk '{print $1}')" == "${checksum}" ]]
-else
-    echo "No SHA-256 verification tool is available" >&2
-    exit 1
-fi
+# macOS ships a sha256sum that accepts only the classic flags ([-bctwz]) and
+# rejects --check, so the command existing is not proof it can verify a checksum
+# file. Probe the capability and fall back to shasum instead of assuming that
+# sha256sum being first in PATH makes it usable.
+verify_sha256() {
+    local expected="$1"
+    local file="$2"
+
+    if command -v sha256sum >/dev/null 2>&1 &&
+        printf '%s  %s\n' "${expected}" "${file}" | sha256sum --check --status 2>/dev/null; then
+        return 0
+    fi
+    if command -v shasum >/dev/null 2>&1 &&
+        [[ "$(shasum -a 256 "${file}" | awk '{print $1}')" == "${expected}" ]]; then
+        return 0
+    fi
+
+    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+        echo "No SHA-256 verification tool is available" >&2
+    else
+        echo "SHA-256 verification failed for ${file}" >&2
+    fi
+    return 1
+}
+
+verify_sha256 "${checksum}" "${archive_path}"
 tar -xzf "${archive_path}" -C "${destination}" actionlint
 chmod +x "${destination}/actionlint"
 printf '%s\n' "${destination}/actionlint"
