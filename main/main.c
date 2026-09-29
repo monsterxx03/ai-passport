@@ -247,6 +247,11 @@ static bool handle_line(const badge_line_t *line)
         return false; // 不是我们认识的消息：丢掉
     }
     s_last_message_ms = now_ms();
+    if (s_message.kind == BADGE_MSG_RESET) {
+        // 主机换了新的 ref 空间。屏幕会因此回到状态屏——这条日志是为了让它在现场有据
+        // 可查，而不是让人以为「那条等待自己消失了」。
+        ESP_LOGI(TAG, "主机重连：清空待答队列");
+    }
     if (!was_connected) {
         // 第一次收到东西就是「连上了」——之后靠超时判断它是否还在。
         badge_state_set_connected(&s_state, true);

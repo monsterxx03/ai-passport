@@ -99,6 +99,16 @@ static void test_ask_gone_and_error(void)
     assert(strcmp(message.message, "no such pending request") == 0);
 }
 
+// 主机换了 ref 空间时必须能被解析出来：这条消息没有 ref、没有正文，唯一的作用是
+// 让设备丢掉手里的旧等待项。它不该被当成坏消息丢掉。
+static void test_reset(void)
+{
+    assert(parse("{\"t\":\"reset\",\"seq\":12}"));
+    assert(message.kind == BADGE_MSG_RESET);
+    assert(message.option_count == 0U);
+    assert(message.question_count == 0U);
+}
+
 // 答不回去的消息不该上屏：一条没有 ref 的 ask 在屏幕上是个按不动的按钮。
 static void test_ask_without_ref_is_dropped(void)
 {
@@ -265,6 +275,7 @@ int main(void)
     test_permission_ask();
     test_question_ask();
     test_ask_gone_and_error();
+    test_reset();
     test_ask_without_ref_is_dropped();
     test_question_without_options_is_kept();
     test_oversized_question_is_dropped();

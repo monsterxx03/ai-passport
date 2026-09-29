@@ -327,6 +327,47 @@ static void test_question_navigation_stops_at_the_ends(void)
     assert(strcmp(state.notice, "还有问题没有作答") == 0);
 }
 
+// 主机换了一条连接（ref 从零重新分配）时会先发 reset：设备手里那些再也等不到答案的
+// 等待项必须全部丢掉。不清的话，同一条等待会以新 ref 再入队一次——屏幕上两条，而旧的
+// 那条按下去没有任何反应。
+static void test_reset_drops_every_ask(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_permission(&message, 7UL);
+    assert(badge_state_apply(&state, &message));
+    fill_questions(&message, 8UL, true, 2U);
+    assert(badge_state_apply(&state, &message));
+    assert(state.ask_count == 2U);
+
+    // 把游标挪开，验证 reset 也把它归零：新连接的队列该从第一题第一项开始。
+    (void)badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length);
+    assert(state.selection == 1U);
+
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_RESET;
+    assert(badge_state_apply(&state, &message));
+    assert(state.ask_count == 0U);
+    assert(state.selection == 0U);
+    assert(state.question_index == 0U);
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_STATUS); // 屏幕上回到状态屏
+
+    // 队列本来就是空的：再来一条 reset 不算变化，界面不该为它重绘。
+    assert(!badge_state_apply(&state, &message));
+
+    // 主机随后把同一条等待重新推下来：它作为新的一条进队，游标是干净的。
+    fill_permission(&message, 7UL);
+    assert(badge_state_apply(&state, &message));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_ASK);
+    assert(snapshot.selection == 0U);
+}
+
 // 主机拒绝了回答：屏幕上要看得见，否则按下去没反应像是设备坏了。
 static void test_error_sets_a_visible_notice(void)
 {
@@ -418,6 +459,7 @@ int main(void)
     test_single_select_can_go_back();
     test_multi_select_walks_between_questions();
     test_question_navigation_stops_at_the_ends();
+    test_reset_drops_every_ask();
     test_error_sets_a_visible_notice();
     test_queue_is_bounded();
     test_keys_do_nothing_without_an_ask();

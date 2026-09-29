@@ -113,6 +113,16 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
         return push_ask(state, message);
     case BADGE_MSG_ASK_GONE:
         return drop_ask(state, message->ref);
+    case BADGE_MSG_RESET:
+        // 主机换了新的 ref 空间（它重启了，或者链路重连了——ref 是每条连接分配的）：
+        // 我们手里这些旧 ref 再也等不到答案，而留着它们只会显示一条按下去没有反应的
+        // 等待，屏幕还会把它当成队首。全清，等主机随后的全量重发。
+        if (state->ask_count == 0U) {
+            return false;
+        }
+        state->ask_count = 0U;
+        reset_cursor(state);
+        return true;
     case BADGE_MSG_ERROR:
         // 主机的拒绝要给用户看见：不然按下去没反应，看起来像是设备坏了。
         set_notice(state, message->message[0] != '\0' ? message->message : "主机拒绝了这次回答",

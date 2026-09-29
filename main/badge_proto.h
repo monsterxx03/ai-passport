@@ -45,6 +45,7 @@ typedef enum {
     BADGE_MSG_ASK,      // 一条待答项（权限确认或提问）
     BADGE_MSG_ASK_GONE, // 某条待答项已被撤销
     BADGE_MSG_ERROR,    // 主机侧拒绝了我们的回答
+    BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
 } badge_msg_kind_t;
 
 typedef enum {

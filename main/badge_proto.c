@@ -229,6 +229,12 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
         (void)take_string(&root, "message", out->message, sizeof(out->message));
         return true;
     }
+    if (strcmp(kind, "reset") == 0) {
+        // 主机换了新的 ref 空间——每条连接都会重新分配 ref，所以旧的等待项在这条
+        // 连接上再也等不到答案了。设备收到就把队列清空，等主机随后的全量重发。
+        out->kind = BADGE_MSG_RESET;
+        return true;
+    }
     return false; // 不认识的消息类型：丢掉
 }
 
