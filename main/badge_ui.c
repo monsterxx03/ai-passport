@@ -82,12 +82,28 @@ static lv_obj_t *make_label(lv_obj_t *parent, uint32_t color)
     return label;
 }
 
-// wrap_label 让文字在给定宽度里换行——命令预览和问题全文都可能很长，
-// 而这块屏上没有横向滚动可言。
-static void wrap_label(lv_obj_t *label, int width)
+// one_line 把 label 约束成「一行，超出打点」。
+//
+// 光设宽度不够：LVGL 的 LV_LABEL_LONG_DOT 是「先按对象尺寸换行，再在最后一行打点」，
+// 高度不定死就会撑出第二行，压到下面那一行上去——这块屏上相邻元素只隔 24px（选项之间
+// 甚至贴身），两行文本必然重叠。
+static void one_line(lv_obj_t *label, int width, bool centered)
 {
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(label, width);
+    lv_obj_set_height(label, (int32_t)badge_font_16.line_height);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    if (centered) {
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+// at_most_lines 允许最多 lines 行，超出在最后一行打点。题目正文与命令预览是唯一
+// 允许多行的区域，而它的高度就是面板留给它的那块空间——同样不能撑破面板压到选项上。
+static void at_most_lines(lv_obj_t *label, int width, int lines)
+{
+    lv_obj_set_width(label, width);
+    lv_obj_set_height(label, (int32_t)badge_font_16.line_height * lines);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
 }
 
 static void build_status_screen(void)
@@ -116,21 +132,19 @@ static void build_status_screen(void)
     lv_obj_align(s_st_dot, LV_ALIGN_TOP_MID, 0, 176);
 
     s_st_state = make_label(s_status_scr, COL_TEXT);
+    one_line(s_st_state, 200, true);
     lv_obj_align(s_st_state, LV_ALIGN_TOP_MID, 0, 194);
 
     s_st_route = make_label(s_status_scr, COL_MUTED);
-    lv_label_set_long_mode(s_st_route, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_st_route, 200);
-    lv_obj_set_style_text_align(s_st_route, LV_TEXT_ALIGN_CENTER, 0);
+    one_line(s_st_route, 200, true);
     lv_obj_align(s_st_route, LV_ALIGN_TOP_MID, 0, 224);
 
     s_st_detail = make_label(s_status_scr, COL_MUTED);
-    lv_label_set_long_mode(s_st_detail, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_st_detail, 200);
-    lv_obj_set_style_text_align(s_st_detail, LV_TEXT_ALIGN_CENTER, 0);
+    one_line(s_st_detail, 200, true);
     lv_obj_align(s_st_detail, LV_ALIGN_TOP_MID, 0, 248);
 
     s_st_footer = make_label(s_status_scr, COL_MUTED);
+    one_line(s_st_footer, 220, true);
     lv_obj_align(s_st_footer, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
@@ -141,6 +155,8 @@ static void build_ask_screen(void)
     s_ask_scr = make_screen();
 
     s_ak_heading = make_label(s_ask_scr, COL_ACCENT);
+    // 宽度 150 是给右上角的电量留位置：标题从 x=20 起，电量从右侧 220 起。
+    one_line(s_ak_heading, 150, false);
     lv_obj_align(s_ak_heading, LV_ALIGN_TOP_LEFT, 20, 14);
 
     s_ak_battery = make_label(s_ask_scr, COL_MUTED);
@@ -157,12 +173,12 @@ static void build_ask_screen(void)
     lv_obj_set_style_pad_all(panel, 8, 0);
 
     s_ak_subject = make_label(panel, COL_MUTED);
-    lv_label_set_long_mode(s_ak_subject, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_ak_subject, 200);
+    one_line(s_ak_subject, 200, false);
     lv_obj_align(s_ak_subject, LV_ALIGN_TOP_LEFT, 0, 0);
 
+    // 面板内高 84px，主题占掉 22px，正文最多 3 行（3×19=57）——再多就要压到选项上。
     s_ak_body = make_label(panel, COL_TEXT);
-    wrap_label(s_ak_body, 200);
+    at_most_lines(s_ak_body, 200, 3);
     lv_obj_align(s_ak_body, LV_ALIGN_TOP_LEFT, 0, 22);
 
     for (i = 0; i < BADGE_MAX_OPTIONS; ++i) {
@@ -179,13 +195,14 @@ static void build_ask_screen(void)
 
         s_ak_options[i] = row;
         s_ak_labels[i] = make_label(row, COL_TEXT);
-        lv_label_set_long_mode(s_ak_labels[i], LV_LABEL_LONG_DOT);
-        lv_obj_set_width(s_ak_labels[i], 190);
+        // 一行定死：选项行本身只有 22px 高、行距 24px，标签一旦换行就会压到下一行上。
+        one_line(s_ak_labels[i], 190, false);
         lv_obj_align(s_ak_labels[i], LV_ALIGN_LEFT_MID, 0, 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
     }
 
     s_ak_footer = make_label(s_ask_scr, COL_MUTED);
+    one_line(s_ak_footer, 220, true);
     lv_obj_align(s_ak_footer, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
@@ -286,9 +303,11 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
         if (ask->question_count > 1U) {
             char heading[BADGE_TITLE_MAX + 16];
 
-            (void)snprintf(heading, sizeof(heading), "%s (%u/%u)", ask->title,
+            // 题号写在**前面**：标题长了会被 one_line 截掉尾巴，而「第几题」正是
+            // 换题时唯一需要一直看得见的东西（当前题的主题就在下面那行）。
+            (void)snprintf(heading, sizeof(heading), "(%u/%u) %s",
                            (unsigned)(snapshot->question_index + 1U),
-                           (unsigned)ask->question_count);
+                           (unsigned)ask->question_count, ask->title);
             lv_label_set_text(s_ak_heading, heading);
         } else {
             lv_label_set_text(s_ak_heading, ask->title);
@@ -352,7 +371,7 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
         }
     }
 
-    // 底栏：先报按键，再报其它。题号不在这里重复——标题已经写成「标题 (1/2)」，
+    // 底栏：先报按键，再报其它。题号不在这里重复——标题写成「(1/2) 主题」，
     // 而这块屏一行放不下「第几题 + 换题 + 提交」三件事。
     if (snapshot->notice != NULL) {
         lv_label_set_text(s_ak_footer, snapshot->notice);
