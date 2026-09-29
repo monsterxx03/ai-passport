@@ -33,6 +33,7 @@ extern const lv_image_dsc_t badge_avatar;
 
 static lv_obj_t *s_status_scr;
 static lv_obj_t *s_ask_scr;
+static lv_obj_t *s_pair_scr;
 
 static lv_obj_t *s_st_battery;
 static lv_obj_t *s_st_dot;
@@ -49,7 +50,11 @@ static lv_obj_t *s_ak_options[BADGE_MAX_OPTIONS];
 static lv_obj_t *s_ak_labels[BADGE_MAX_OPTIONS];
 static lv_obj_t *s_ak_footer;
 
-static badge_ui_view_t s_view;
+// 配对屏：用户要在另一台设备上照着敲这串数字，所以它值得独占一屏。
+static lv_obj_t *s_pair_battery;
+static lv_obj_t *s_pair_code;
+
+static lv_obj_t *s_current_scr;
 
 static lv_obj_t *plain(lv_obj_t *parent)
 {
@@ -111,16 +116,25 @@ static void at_most_lines(lv_obj_t *label, int width, int lines)
 // 数。默认 40 对这块小屏偏慢，长一点的选项要等好几秒才滚完。
 #define MARQUEE_SPEED_PX_S 60
 
-// marquee 让一行文字横向循环滚动，只用在**选中的那一行**上：五个选项同时滚会谁也看
-// 不清，而黄色高亮就是「你在看这一行」。文字放得下时 LVGL 不会启动动画。
+// marquee 让一行文字横向循环滚动。文字放得下时 LVGL 不会启动动画，所以它可以常开着。
+//
+// 「模式没变就直接返回」不是优化，是必要条件：lv_label_set_long_mode 每次都无条件删掉
+// 动画并把 offset 归零（源码里第一件事就是 lv_anim_delete + lv_point_set），而状态屏
+// 每 10 秒会收到一次心跳、因而重画一次——不挡这一下，长文案会每 10 秒从头开始，永远
+// 滚不到后半句。
 static void marquee(lv_obj_t *label, bool on)
 {
+    lv_label_long_mode_t mode =
+        on ? LV_LABEL_LONG_MODE_SCROLL_CIRCULAR : LV_LABEL_LONG_MODE_DOTS;
+
+    if (lv_label_get_long_mode(label) == mode) {
+        return;
+    }
     if (on) {
         lv_obj_set_style_anim_duration(label,
                                        lv_anim_speed_clamped(MARQUEE_SPEED_PX_S, 300, 10000), 0);
     }
-    lv_label_set_long_mode(label,
-                           on ? LV_LABEL_LONG_MODE_SCROLL_CIRCULAR : LV_LABEL_LONG_MODE_DOTS);
+    lv_label_set_long_mode(label, mode);
 }
 
 static void build_status_screen(void)
@@ -223,11 +237,42 @@ static void build_ask_screen(void)
     lv_obj_align(s_ak_footer, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
+static void build_pair_screen(void)
+{
+    s_pair_scr = make_screen();
+
+    lv_obj_t *brand = make_label(s_pair_scr, COL_MUTED);
+
+    lv_label_set_text(brand, "TACHI");
+    lv_obj_align(brand, LV_ALIGN_TOP_LEFT, 20, 16);
+
+    s_pair_battery = make_label(s_pair_scr, COL_MUTED);
+    lv_obj_align(s_pair_battery, LV_ALIGN_TOP_RIGHT, -20, 16);
+
+    lv_obj_t *hint = make_label(s_pair_scr, COL_TEXT);
+
+    lv_label_set_text(hint, "在电脑上输入这个码");
+    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 84);
+
+    // 48px：这是整块屏幕上唯一需要「隔着一米也看得清」的东西——用户要把它念到、
+    // 或者抄进另一台设备。用 LVGL 内置的 Montserrat：它不含中文，而配对码正好只有
+    // 数字，所以不必为它再生成一套中文字形。
+    s_pair_code = make_label(s_pair_scr, COL_ACCENT);
+    lv_obj_set_style_text_font(s_pair_code, &lv_font_montserrat_48, 0);
+    lv_obj_align(s_pair_code, LV_ALIGN_TOP_MID, 0, 122);
+
+    lv_obj_t *footer = make_label(s_pair_scr, COL_MUTED);
+
+    lv_label_set_text(footer, "输完它就会自动连上");
+    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -34);
+}
+
 void badge_ui_init(void)
 {
     build_status_screen();
     build_ask_screen();
-    s_view = BADGE_UI_STATUS;
+    build_pair_screen();
+    s_current_scr = s_status_scr;
     lv_screen_load(s_status_scr);
 }
 
@@ -243,6 +288,26 @@ static void set_battery(lv_obj_t *label, const badge_ui_snapshot_t *snapshot)
     }
     (void)snprintf(text, sizeof(text), "%d%%", snapshot->battery_percent);
     lv_label_set_text(label, text);
+}
+
+// 状态屏底栏。一次性提示优先——它说的是刚发生的事（「已忘记那台电脑」），而这块
+// 屏幕上是唯一能把它讲出来的地方；没有提示时才轮到「另有 N 个会话在跑」。
+static void set_status_footer(const badge_ui_snapshot_t *snapshot)
+{
+    char footer[64];
+
+    if (snapshot->notice != NULL) {
+        lv_label_set_text(s_st_footer, snapshot->notice);
+        return;
+    }
+    // 按主机报的总数算，不按这里放得下的那几个：放不下的会话同样是「另有」。
+    if (snapshot->session_total > 1U) {
+        (void)snprintf(footer, sizeof(footer), "另有 %u 个会话在跑",
+                       (unsigned)(snapshot->session_total - 1U));
+        lv_label_set_text(s_st_footer, footer);
+        return;
+    }
+    lv_label_set_text(s_st_footer, "");
 }
 
 static uint32_t status_color(const badge_ui_snapshot_t *snapshot)
@@ -262,22 +327,65 @@ static uint32_t status_color(const badge_ui_snapshot_t *snapshot)
     return COL_THINK;
 }
 
+static void render_pair(const badge_ui_snapshot_t *snapshot)
+{
+    char spaced[16];
+
+    set_battery(s_pair_battery, snapshot);
+
+    // 「463160」切成「463 160」：六位数字连成一片容易被抄错一位，而抄错一位的后果
+    // 是配对失败、用户完全不知道错在哪。分成两组之后眼睛能自己对上。
+    if (strlen(snapshot->passkey) == 6U) {
+        (void)snprintf(spaced, sizeof(spaced), "%.3s %.3s", snapshot->passkey,
+                       snapshot->passkey + 3);
+        lv_label_set_text(s_pair_code, spaced);
+    } else {
+        // 协议栈给的一定是 6 位（badge_ble 用 %06u 生成），这里只是不替它假设。
+        lv_label_set_text(s_pair_code, snapshot->passkey);
+    }
+}
+
 static void render_status(const badge_ui_snapshot_t *snapshot)
 {
-    char footer[64];
-
     set_battery(s_st_battery, snapshot);
+
+    // 这两行都能滚，但只有真放不下时才动（LVGL 自己比宽度）。会话标题是主机下发的、
+    // 长度不归我们管；状态说明虽然是自己写的，也留出滚动的余地。息屏时必须停——
+    // 黑屏背后的动画纯粹在烧电，还会让 LVGL 任务一直重绘。
+    marquee(s_st_route, snapshot->screen_on);
+    marquee(s_st_detail, snapshot->screen_on);
 
     if (!snapshot->connected) {
         // 链路断了：屏幕上必须说清楚，否则「空闲」会被读成「agent 没在干活」。
         lv_label_set_text(s_st_state, "等电脑");
         lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(COL_MUTED), 0);
         lv_label_set_text(s_st_route, "");
-        lv_label_set_text(s_st_detail, "还没有连上 tachi");
-        lv_label_set_text(s_st_footer, "");
+        // 「等电脑」底下藏着四种处境，用户要做的动作完全不同——糊成一句「还没有
+        // 连上 tachi」等于什么都没说，而这块屏幕存在的意义就是回答「现在需要你
+        // 做什么」。
+        //
+        // 每句都压在一行放得下的长度里（200px ≈ 12 个汉字）：这几句是常驻说明，
+        // 一眼看完比让它滚起来好——滚动是留给放不下的东西的。
+        switch (snapshot->link) {
+        case BADGE_UI_LINK_PAIRED:
+            lv_label_set_text(s_st_detail, "打开电脑上的 tachi");
+            break;
+        case BADGE_UI_LINK_SECURED:
+            lv_label_set_text(s_st_detail, "在 tachi 里选这台设备");
+            break;
+        case BADGE_UI_LINK_PAIRING:
+            // 正常走不到这里：passkey 一到就会切到配对屏（见 badge_ui_render）。
+            // 配对刚开始的那一帧除外，那时还没有码可显示。
+            lv_label_set_text(s_st_detail, "正在配对…");
+            break;
+        case BADGE_UI_LINK_UNPAIRED:
+        default:
+            lv_label_set_text(s_st_detail, "在电脑上搜 Tachi-Badge");
+            break;
+        }
+        set_status_footer(snapshot);
         return;
     }
-
     lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(status_color(snapshot)), 0);
 
     if (!snapshot->has_session) {
@@ -290,14 +398,7 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
         lv_label_set_text(s_st_detail, snapshot->state_detail);
     }
 
-    // 按主机报的总数算，不按这里放得下的那几个：放不下的会话同样是「另有」。
-    if (snapshot->session_total > 1U) {
-        (void)snprintf(footer, sizeof(footer), "另有 %u 个会话在跑",
-                       (unsigned)(snapshot->session_total - 1U));
-    } else {
-        footer[0] = '\0';
-    }
-    lv_label_set_text(s_st_footer, footer);
+    set_status_footer(snapshot);
 }
 
 static bool option_checked(const badge_ui_snapshot_t *snapshot, size_t index)
@@ -439,17 +540,26 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
 
 void badge_ui_render(const badge_ui_snapshot_t *snapshot)
 {
+    lv_obj_t *wanted;
+
     if (snapshot == NULL) {
         return;
     }
-    if (snapshot->view != s_view) {
-        s_view = snapshot->view;
-        lv_screen_load(s_view == BADGE_UI_ASK ? s_ask_scr : s_status_scr);
-    }
-    if (s_view == BADGE_UI_ASK) {
+    // 配对压倒一切：此刻用户唯一的任务是把屏幕上那 6 位数字敲进电脑，会话列表、
+    // 电量、别的任何信息都是干扰。配对结束（passkey 变空）后自动走下面那两条路。
+    if (snapshot->passkey != NULL && snapshot->passkey[0] != '\0') {
+        render_pair(snapshot);
+        wanted = s_pair_scr;
+    } else if (snapshot->view == BADGE_UI_ASK) {
         render_ask(snapshot);
+        wanted = s_ask_scr;
     } else {
         render_status(snapshot);
+        wanted = s_status_scr;
+    }
+    if (wanted != s_current_scr) {
+        s_current_scr = wanted;
+        lv_screen_load(wanted);
     }
 }
 

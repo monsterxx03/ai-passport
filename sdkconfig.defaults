@@ -24,6 +24,10 @@ CONFIG_LV_COLOR_DEPTH_16=y
 CONFIG_LV_DEF_REFR_PERIOD=20
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
+# 48 号只给配对屏那 6 位数字用：用户要把它念到、抄进另一台设备，是这块屏上唯一
+# 需要「隔着一米也看得清」的东西。Montserrat 不含中文，而配对码正好只有数字，
+# 所以不必为它再生成一套中文字形。
+CONFIG_LV_FONT_MONTSERRAT_48=y
 # 汉字字体有两万多个字形，位图索引会超过默认的 20 位（1MB）上限——LVGL 为这个
 # 场景提供了这个开关。不开的话编译报 -Woverflow，索引被截断成低 20 位，字体表
 # 全乱（而且第一眼看上去像是字体生成错了）。
@@ -54,4 +58,11 @@ CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
-CONFIG_BT_NIMBLE_NVS_PERSIST=n
+# 配对相关的三条，都是设计的一部分（探针实测过，见 tachi 设计文档附录 A.2）：
+#   NVS_PERSIST：bond 要跨重启存活，否则「重连免配对」根本不成立
+#   MAX_BONDS=1：badge 属于一台电脑，新配对顶掉旧的
+#   HANDLE_REPEAT_PAIRING_DELETION：对方删了 bond 再来配时，本机那条陈旧的也要删掉
+#     ——默认 n，正是「换电脑」时最经典的死锁
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_MAX_BONDS=1
+CONFIG_BT_NIMBLE_HANDLE_REPEAT_PAIRING_DELETION=y

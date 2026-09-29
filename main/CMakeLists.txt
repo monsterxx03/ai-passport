@@ -7,11 +7,12 @@ idf_component_register(
          "badge_json.c"
          "badge_proto.c"
          "badge_link.c"
+         "badge_ble.c"
          "badge_state.c"
          "badge_power.c"
          "badge_ui.c"
          "badge_font_16.c"
          "badge_avatar.c"
     INCLUDE_DIRS "."
-    REQUIRES bsp esp_driver_usb_serial_jtag esp_timer lvgl nvs_flash
+    REQUIRES bsp esp_driver_usb_serial_jtag esp_timer lvgl nvs_flash bt
 )

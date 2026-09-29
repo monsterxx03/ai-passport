@@ -27,6 +27,18 @@ typedef enum {
     BADGE_UI_ASK,        // 有事等你：权限确认，或模型提的问题
 } badge_ui_view_t;
 
+// 链路的四种状态。刻意不 include badge_ble.h：那个头带着 esp_err.h（ESP-IDF 专有），
+// 而本头会被主机测试包含（那边没有 ESP-IDF 的头路径）。
+//
+// 这四态值得各占一行界面，因为用户要做的事完全不同：去配对 / 把屏幕上的码敲进电脑 /
+// 打开 tachi / 什么都不用做。只画一个「等电脑」会把它们全糊成同一件事。
+typedef enum {
+    BADGE_UI_LINK_UNPAIRED = 0, // 没有 bond：在广播，等电脑来配
+    BADGE_UI_LINK_PAIRING,      // 正在配对：屏幕上必须显示那 6 位码
+    BADGE_UI_LINK_PAIRED,       // 有 bond，但没连上
+    BADGE_UI_LINK_SECURED,      // 连上了，而且已认证加密
+} badge_ui_link_t;
+
 // BADGE_UI_MAX_CHECKED 是勾选位掩码的宽度，与选项上限一致。
 #define BADGE_UI_MAX_CHECKED BADGE_MAX_OPTIONS
 
@@ -56,6 +68,12 @@ typedef struct {
     // 屏幕（背光）此刻亮不亮。界面唯一需要它的地方是「选中的那一行要不要跑马灯」：
     // 熄灭的屏幕背后还在动的动画纯粹是在烧电，而它还会让 LVGL 任务一直重绘。
     bool screen_on;
+
+    // 蓝牙链路当前的状态，以及正在配对时那 6 位码（不在配对态是空串）。
+    // passkey 非空时界面**忽略 view**、直接显示配对屏：这一刻用户唯一的任务就是
+    // 照着这串数字敲进电脑，别的信息都是干扰。
+    badge_ui_link_t link;
+    const char *passkey;
 } badge_ui_snapshot_t;
 
 // badge_ui_init 建好对象树并停在状态屏。必须在 LVGL 初始化之后、持锁调用。

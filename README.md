@@ -13,22 +13,28 @@ walk away from the desk and you stop seeing them.
 This firmware makes the AI Passport (a 240×320 screen with three buttons) a second door onto that
 wait: the screen says who is waiting and what for, and the buttons carry your decision back.
 
-## The three screens
+## The four screens
 
 | Screen | When | What you can do |
 | --- | --- | --- |
 | Status | the usual case | see who is running, how far along, whether the computer is connected, battery |
 | Confirm | a command wants approval | read the preview, pick allow once / allow for this session / deny |
 | Question | the model asked something | a list of options, multi-select supported |
+| Pairing | the first time over Bluetooth | the 6-digit code on the screen, to be typed on the computer |
+
+The pairing screen overrides the other three: while that code is up, typing it into the computer is
+your only job and everything else is noise.
 
 Buttons: a short up/down moves between options, OK submits. On a multi-select question OK toggles
 and a long press submits; when one ask holds several questions, a **long up/down switches
-questions** (a single-select question advances on its own once answered).
+questions** (a single-select question advances on its own once answered). On the status screen a long
+press on OK forgets the computer (twice — the first press only asks).
 
 The screen also goes quiet on its own: with nothing pending and nobody pressing anything, the
 backlight turns off after 60 seconds. What saves power is the backlight, not sleeping the chip —
 a sleeping chip cannot hear the ask the host is trying to deliver. **The screen never blanks while
-an ask is pending**; after it blanks, any button lights it immediately, and that press only lights
+an ask is pending, nor while pairing** (that code is the task at hand and you are at the computer
+typing it); after it blanks, any button lights it immediately, and that press only lights
 it (on a dark screen you cannot see where the cursor is, so it must not submit anything). A new ask,
 or the link dropping, lights it too.
 
@@ -47,11 +53,15 @@ leaving the button doing nothing.
 
 ## How it talks to the computer
 
-One USB serial line (the ESP32-C3's USB-Serial-JTAG), line-delimited JSON, every line prefixed
-with `@@`.
+One link: a USB serial line (the ESP32-C3's USB-Serial-JTAG), or Bluetooth with no cable at all. Both
+carry the same protocol — line-delimited JSON, every line prefixed with `@@` — so the transport
+changes nothing about it.
 
-The prefix is not fussiness: the device's console log and the protocol share that one line, and the
-prefix is the only thing separating them — you can watch them interleave on boot
+Bluetooth pairs once: the device shows a 6-digit code and you type it on the computer (reconnects
+skip that step).
+
+The prefix is not fussiness: on the serial line the device's console log and the protocol share it,
+and the prefix is the only thing separating them — you can watch them interleave on boot
 (`I (156) esp_image: ...` right next to `@@{"t":"hello"...}`).
 
 The other half of the protocol lives in the tachi repository: `desktop/link/link.go`, with the design
@@ -105,9 +115,10 @@ changes. At that point the artifact, its source and its license can be committed
 main/badge_proto.c    the protocol: parse and encode one line of JSON (pure logic, host-testable)
 main/badge_json.c     the minimal JSON reader/writer used by it (no deps, no allocation)
 main/badge_link.c     the serial line: framing, only lines carrying @@ count
+main/badge_ble.c      the Bluetooth link: GATT peripheral, pairing, the four link states, dropping a stuck connection
 main/badge_state.c    the state machine: what arrives, what a key press sends (pure, host-testable)
 main/badge_power.c    screen on/off: how long idle blanks it, what lights it (pure, host-testable)
-main/badge_ui.c       the three screens (its own UI, not the baseline demo menu shell)
+main/badge_ui.c       the four screens (its own UI, not the baseline demo menu shell)
 main/main.c           entry: init, event loop, heartbeat and timeout
 tests/test_badge_*.c  unit tests for the pure parts (`./tools/validate.sh --static` runs them)
 ```
@@ -126,4 +137,9 @@ tests/test_badge_*.c  unit tests for the pure parts (`./tools/validate.sh --stat
   decode it. The failure is deceptive: glyphs resolve, bounding boxes are correct, yet nothing is
   drawn at all — while a built-in font renders fine, so it reads like "the font is too big",
   "out of memory" or "the renderer is broken". (`tools/gen_badge_font.sh` already passes it.)
+- **Changing computers is not plug-and-play**: the bond stored here and the one on the computer are
+  two separate copies, and **forgetting only one of them ends in connect-then-drop, which macOS will
+  not recover from on its own**. To move to another computer, long-press OK twice on the status screen
+  to forget it here, then Forget the device in System Settings → Bluetooth (CoreBluetooth has no
+  unpair API, so that is the only way back).
 - The serial port is exclusive: while this firmware runs, `idf.py monitor` cannot open the same port.
