@@ -181,6 +181,20 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
 
 // 链路状态映射给界面。badge_state 只懂协议那一层（它不知道自己在跟谁说话），
 // 所以「走的是哪条传输、安全了没有」只有这里知道，由这里喂进快照。
+// active_transport 说出方向此刻走哪条链路。
+//
+// 这条判据只有这一份：send_line 按它路由，状态屏顶栏按它显示。两处各写一遍的话，
+// 「屏幕上写着 BLE、消息却从串口出去」这种事只是时间问题——而这类不一致正是排查
+// 时最费时间的那种。
+//
+// 判据本身来自两边的不对称：主机一次只用一条传输，BLE 只有在**已认证加密**时才算
+// 可用（见 badge_ble），而串口那条一直「可用」——没主机时它的写会失败，无害。
+static badge_ui_transport_t active_transport(void)
+{
+    return badge_ble_state() == BADGE_BLE_SECURED ? BADGE_UI_TRANSPORT_BLE
+                                                  : BADGE_UI_TRANSPORT_USB;
+}
+
 static badge_ui_link_t link_for_ui(void)
 {
     switch (badge_ble_state()) {
@@ -206,6 +220,8 @@ static void render(void)
     // 的任务，而它只在配对进行中才有值。
     s_snapshot.link = link_for_ui();
     s_snapshot.passkey = badge_ble_passkey();
+    // 顶栏那三个字母：和 send_line 用的是同一条判据（见 active_transport）。
+    s_snapshot.transport = active_transport();
 
     // LVGL 不是线程安全的：这一屏的每一次修改都要在锁里。拿不到锁就跳过这一帧，
     // 下一轮再画——为了一帧画面去等，会把按键的响应一起拖住。
@@ -238,11 +254,8 @@ static void render(void)
     bsp_lvgl_unlock();
 }
 
-// 出方向的路由：链路安全时走 BLE，否则走串口。
-//
-// 主机一次只用一条传输，所以「哪条是活的」不需要额外协商：BLE 只有在**已认证加密**
-// 时才算可用（见 badge_ble），而串口那条一直可用（没主机时它的写会失败，无害）。
-// 注意开机那句 hello 一定走串口并丢掉——设备每 10 秒的 sync 会把会话补回来。
+// 出方向的路由。注意开机那句 hello 一定走串口并丢掉——设备每 10 秒的 sync 会把
+// 会话补回来。
 static bool send_line(const char *text, size_t length)
 {
     bool sent;
@@ -250,7 +263,7 @@ static bool send_line(const char *text, size_t length)
     if (length == 0U) {
         return false;
     }
-    if (badge_ble_state() == BADGE_BLE_SECURED) {
+    if (active_transport() == BADGE_UI_TRANSPORT_BLE) {
         sent = badge_ble_send(text, length);
     } else {
         sent = badge_link_send(text, length);

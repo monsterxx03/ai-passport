@@ -39,6 +39,14 @@ typedef enum {
     BADGE_UI_LINK_SECURED,      // 连上了，而且已认证加密
 } badge_ui_link_t;
 
+// 出方向此刻走哪条链路。界面只负责显示它，而**判据只有一份**（main.c 的
+// active_transport）：同一条判据既决定 send_line 往哪儿发，也决定顶栏写什么。
+// 分成两份的话，屏幕上写着「BLE」、消息却从串口出去这种事只是时间问题。
+typedef enum {
+    BADGE_UI_TRANSPORT_USB = 0, // USB-Serial-JTAG，有线那条
+    BADGE_UI_TRANSPORT_BLE,     // 蓝牙：只有「已认证加密」时才算可用
+} badge_ui_transport_t;
+
 // BADGE_UI_MAX_CHECKED 是勾选位掩码的宽度，与选项上限一致。
 #define BADGE_UI_MAX_CHECKED BADGE_MAX_OPTIONS
 
@@ -74,6 +82,9 @@ typedef struct {
     // 照着这串数字敲进电脑，别的信息都是干扰。
     badge_ui_link_t link;
     const char *passkey;
+
+    // 状态屏顶栏显示的那三个字母：出方向此刻走哪条链路（见 main.c 的 active_transport）。
+    badge_ui_transport_t transport;
 } badge_ui_snapshot_t;
 
 // badge_ui_init 建好对象树并停在状态屏。必须在 LVGL 初始化之后、持锁调用。

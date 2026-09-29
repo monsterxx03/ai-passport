@@ -26,8 +26,13 @@ typedef enum {
 // badge_ble_start 起链路：初始化协议栈、注册 GATT、开始广播。可重复调用（更新回调）。
 esp_err_t badge_ble_start(badge_ble_line_cb_t callback, void *context);
 
-// badge_ble_send 发一整行（不含前缀与换行）：按协商到的 MTU 切片，逐个 notify。
-// 链路没到「已认证加密」或对方没订阅时返回 false —— 一个字都不发。
+// badge_ble_send 发一整行（正文，不含前缀与换行）：**成帧由传输负责**——补上 @@ 与
+// 换行，再按协商到的 MTU 切开逐个 notify。链路没到「已认证加密」或对方没订阅时返回
+// false —— 一个字都不发（并把三个条件打出来：这个返回是静默的）。
+//
+// 成帧不能省：GATT 只保证「来了一段」，而收方（tachi 的 link 层）是**字节流**——它按
+// 换行切行、只认 @@ 开头的行。少一个字节，每一行都会被当控制台日志丢掉，而发方这边
+// 一切正常（真机上「连上了、却什么也送不回来」就是这么来的）。
 bool badge_ble_send(const char *data, size_t length);
 
 badge_ble_state_t badge_ble_state(void);

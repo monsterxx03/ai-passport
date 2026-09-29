@@ -36,6 +36,7 @@ static lv_obj_t *s_ask_scr;
 static lv_obj_t *s_pair_scr;
 
 static lv_obj_t *s_st_battery;
+static lv_obj_t *s_st_transport;
 static lv_obj_t *s_st_dot;
 static lv_obj_t *s_st_state;
 static lv_obj_t *s_st_route;
@@ -145,6 +146,11 @@ static void build_status_screen(void)
 
     lv_label_set_text(brand, "TACHI");
     lv_obj_align(brand, LV_ALIGN_TOP_LEFT, 20, 16);
+
+    // 顶栏的传输指示：屏幕上写的和实际走的必须是同一条判据（见 main.c 的
+    // active_transport）。紧跟在品牌右边，不占别的地方——这一栏一共也只有 240px。
+    s_st_transport = make_label(s_status_scr, COL_MUTED);
+    lv_obj_align_to(s_st_transport, brand, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
 
     s_st_battery = make_label(s_status_scr, COL_MUTED);
     lv_obj_align(s_st_battery, LV_ALIGN_TOP_RIGHT, -20, 16);
@@ -348,6 +354,10 @@ static void render_pair(const badge_ui_snapshot_t *snapshot)
 static void render_status(const badge_ui_snapshot_t *snapshot)
 {
     set_battery(s_st_battery, snapshot);
+    // 出方向走哪条链路是**路由事实**，不是「连没连上」：蓝牙没到「已认证加密」时
+    // 每一行都从串口出去，屏幕上就该这么写。
+    lv_label_set_text(s_st_transport,
+                      snapshot->transport == BADGE_UI_TRANSPORT_BLE ? "BLE" : "USB");
 
     // 这两行都能滚，但只有真放不下时才动（LVGL 自己比宽度）。会话标题是主机下发的、
     // 长度不归我们管；状态说明虽然是自己写的，也留出滚动的余地。息屏时必须停——

@@ -190,18 +190,11 @@ static void feed(const char *data, size_t length)
 
 // --- 出方向 ------------------------------------------------------------------
 
-bool badge_ble_send(const char *data, size_t length)
+// notify_chunks 把一段字节按协商到的 MTU 逐个 notify 出去。
+static bool notify_chunks(const char *data, size_t length)
 {
     size_t sent = 0;
-    bool ok = true;
 
-    if (data == NULL || length == 0U) {
-        return false;
-    }
-    // 安全之前一个字都不发：这条链路上的每一行都可能是在批准一条命令。
-    if (!s_secured || !s_subscribed || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
-        return false;
-    }
     while (sent < length) {
         size_t chunk = length - sent;
 
@@ -212,12 +205,31 @@ bool badge_ble_send(const char *data, size_t length)
 
         if (om == NULL || ble_gatts_notify_custom(s_conn_handle, s_tx_handle, om) != 0) {
             ESP_LOGW(TAG, "notify 失败（已发 %u/%u 字节）", (unsigned)sent, (unsigned)length);
-            ok = false;
-            break;
+            return false;
         }
         sent += chunk;
     }
-    return ok;
+    return true;
+}
+
+bool badge_ble_send(const char *data, size_t length)
+{
+    if (data == NULL || length == 0U) {
+        return false;
+    }
+    // 安全之前一个字都不发：这条链路上的每一行都可能是在批准一条命令。
+    if (!s_secured || !s_subscribed || s_conn_handle == BLE_HS_CONN_HANDLE_NONE) {
+        // 三个值都得打出来：这个返回是静默的，而「发不出去、两侧又都不报错」在真机上
+        // 让人只知道盯着屏幕猜（一次 22 字节的 sync 连续失败，日志里却什么都没有）。
+        ESP_LOGW(TAG, "发送被拒：secured=%d subscribed=%d conn=0x%04x",
+                 (int)s_secured, (int)s_subscribed, (unsigned)s_conn_handle);
+        return false;
+    }
+    // 成帧与串口那条对称（见 badge_link_send）：收方是个**字节流**，行边界只能由发方给。
+    // 省掉这个前缀与换行，主机就把每一行都当成控制台日志丢掉——而发方这边完全正常。
+    return notify_chunks(BADGE_BLE_LINE_PREFIX, BADGE_BLE_LINE_PREFIX_LENGTH) &&
+           notify_chunks(data, length) &&
+           notify_chunks("\n", 1U);
 }
 
 // --- GATT --------------------------------------------------------------------
@@ -284,6 +296,23 @@ static const struct ble_gatt_svc_def s_services[] = {
 
 static int gap_event(struct ble_gap_event *event, void *arg);
 
+// subscribe_reason_name 把订阅事件的来源说清楚：对端写入 CCCD、从 NVS 恢复（bonded
+// 重连）、还是链路结束（清除）。三者在日志里长得一样，但含义完全不同——上一版就是
+// 因为分不清「恢复」与「写入」而在 CONNECT 里把恢复来的订阅清掉了。
+static const char *subscribe_reason_name(uint8_t reason)
+{
+    switch (reason) {
+    case BLE_GAP_SUBSCRIBE_REASON_WRITE:
+        return "对端写入";
+    case BLE_GAP_SUBSCRIBE_REASON_RESTORE:
+        return "从 NVS 恢复";
+    case BLE_GAP_SUBSCRIBE_REASON_TERM:
+        return "链路结束";
+    default:
+        return "未知来源";
+    }
+}
+
 static int advertise(void)
 {
     struct ble_hs_adv_fields fields = { 0 };
@@ -317,7 +346,12 @@ static int gap_event(struct ble_gap_event *event, void *arg)
             return 0;
         }
         s_conn_handle = event->connect.conn_handle;
-        s_subscribed = false;
+        // ⚠️ 这里**不能**清 s_subscribed。bonded 对端重连时，NimBLE 在加密恢复的那一刻
+        // 就从 NVS 恢复 CCCD 并发一条 reason=RESTORE 的订阅事件，而那条事件可能**先于**
+        // 这个 CONNECT 事件到达（ble_gap.c 的 ble_gatts_bonding_restored）。清一下就等于
+        // 把刚恢复的订阅扔掉：整条连接上每个字都被守卫静默拒掉，30 秒后还被自己的
+        // 「主机沉默」规则断开——真机上正是这个症状，而且两侧都不报错。
+        // 订阅由事件驱动：置位的是 SUBSCRIBE，清除的是 DISCONNECT（TERM）与「对端写入 0」。
         s_line_length = 0;
         s_overflow = false;
         // 连接本身算一次活动，否则 idle 会从开机那一刻算起——连上就立刻被判成超时。
@@ -375,7 +409,10 @@ static int gap_event(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_SUBSCRIBE:
         s_subscribed = event->subscribe.cur_notify != 0;
-        ESP_LOGI(TAG, "订阅: notify=%d", (int)s_subscribed);
+        // reason 必须打出来：RESTORE（bonded 重连时从 NVS 恢复）与 WRITE（对端写 CCCD）
+        // 看起来一样，但前者可能先于 CONNECT 到达，正是这一版踩过的坑。
+        ESP_LOGI(TAG, "订阅: notify=%d（%s）", (int)s_subscribed,
+                 subscribe_reason_name(event->subscribe.reason));
         return 0;
 
     case BLE_GAP_EVENT_MTU:
