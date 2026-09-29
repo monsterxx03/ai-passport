@@ -346,6 +346,45 @@ static void test_encoding_refuses_a_partial_message(void)
 
 // 提示音是一条**独立的**消息，而不是挂在 ask 上的字段：「有事等你」与「回合完成」是两件
 // 事，而后者根本不属于任何一条 ask——挂在 ask 上就表达不了它。
+// 语音回执：设备只是显示它，但字段必须解析对——「排队中」与「已发送」是两句话，而那是
+// 用户判断「刚才那句话到哪了」的唯一依据。
+static void test_voice_text(void)
+{
+    char long_text[256];
+
+    assert(parse("{\"t\":\"voice_text\",\"seq\":54,\"id\":7,\"text\":\"帮我把这个改动提交一下\","
+                 "\"state\":\"queued\"}"));
+    assert(message.kind == BADGE_MSG_VOICE_TEXT);
+    assert(strcmp(message.voice_text, "帮我把这个改动提交一下") == 0);
+    assert(message.voice_state == BADGE_VOICE_QUEUED);
+
+    // 认不出的 state 按「已发送」处理：两种里更靠后的一种，而不是让用户以为话还压在队列里。
+    assert(parse("{\"t\":\"voice_text\",\"id\":7,\"text\":\"hi\",\"state\":\"whatever\"}"));
+    assert(message.voice_state == BADGE_VOICE_SENT);
+
+    // 文本为空也是合法的一条（主机没认出字）：显示成「已发送：」——不崩、不留上一句的残渣。
+    assert(parse("{\"t\":\"voice_text\",\"id\":7,\"text\":\"\",\"state\":\"sent\"}"));
+    assert(message.voice_text[0] == '\0');
+
+    // 超长文本被**截断**而不是溢出：屏幕上那一行本来就显示不下，但越界写会踩坏别的字段。
+    memset(long_text, 0, sizeof(long_text));
+    {
+        size_t i;
+
+        for (i = 0; i + 3U < 200U; i += 3U) {
+            memcpy(&long_text[i], "汉", 3U); // 每个汉字 3 字节
+        }
+    }
+    {
+        char line[384];
+
+        (void)snprintf(line, sizeof(line), "{\"t\":\"voice_text\",\"id\":7,\"text\":\"%s\",\"state\":\"sent\"}",
+                       long_text);
+        assert(parse(line));
+    }
+    assert(strlen(message.voice_text) < BADGE_VOICE_TEXT_MAX);
+}
+
 static void test_alert_message(void)
 {
     assert(parse("{\"t\":\"alert\",\"seq\":9,\"kind\":\"ask\"}"));
@@ -380,6 +419,7 @@ int main(void)
     test_encoding();
     test_question_answer_round_trip();
     test_encoding_refuses_a_partial_message();
+    test_voice_text();
     test_alert_message();
     printf("test_badge_proto: OK\n");
     return 0;

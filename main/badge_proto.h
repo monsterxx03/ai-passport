@@ -25,6 +25,9 @@
 // 也不截断。384 字节 = 128 个汉字，超出这个长度的题本来就该在电脑上回答。
 #define BADGE_QUESTION_MAX 384
 #define BADGE_FIRMWARE_MAX 16
+// 语音回执里那一句转写文本。96 字节 = 32 个汉字，与状态屏那行一次性提示（BADGE_DETAIL_MAX）
+// 一样宽——再长也显示不出来，而截断由 bjson_str_into 落在 UTF-8 边界上。
+#define BADGE_VOICE_TEXT_MAX BADGE_DETAIL_MAX
 
 // 一张屏上能放下的量。超出的部分**不再静默丢掉**（见 main/badge_proto.h 的
 // *_total 字段）：屏幕上会说一句「还有 N 项在电脑上」，因为看不见的选项等于不存在，
@@ -59,7 +62,15 @@ typedef enum {
     BADGE_MSG_ERROR,    // 主机侧拒绝了我们的回答
     BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
     BADGE_MSG_ALERT,    // 响一声：有事等你，或者一个回合跑完了
+    BADGE_MSG_VOICE_TEXT, // 刚才那段语音转成了什么，以及它到哪了
 } badge_msg_kind_t;
+
+// 语音回执里那两种结局：已经发给会话了，还是在队列里等一个 steer 点。这是「你那句话
+// 到哪了」的全部答案（tachi 那份设计文档 §5），设备据此决定说「已发送」还是「排队中」。
+typedef enum {
+    BADGE_VOICE_SENT = 0,
+    BADGE_VOICE_QUEUED,
+} badge_voice_state_t;
 
 // 提示音的两种含义。设备为它们放**不同的音频**——「有事找你」和「好了」是两件事，
 // 人不用看屏幕就能从声音上分开（见 badge_sound）。
@@ -134,6 +145,13 @@ typedef struct {
 
     // BADGE_MSG_ALERT：放哪一段音频（BADGE_ALERT_NONE 表示这条消息不认识，忽略）
     badge_alert_kind_t alert_kind;
+
+    // BADGE_MSG_VOICE_TEXT：转写出来的那一句，以及它到哪了。
+    //
+    // 这里**没有**存协议里的 id：一次只录一段，回执必然是给最近那次录音的（设备侧没有
+    // 多条在飞的录音，所以「对回哪一次」在设备这一端没有意义）。
+    char voice_text[BADGE_VOICE_TEXT_MAX];
+    badge_voice_state_t voice_state;
 } badge_msg_t;
 
 // badge_proto_parse 解析一行（`@@` 前缀与行尾已由传输层剥掉）。

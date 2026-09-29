@@ -24,3 +24,11 @@ void badge_sound_init(void);
 // badge_sound_play 请求放一段提示音。从任何任务调都行，不阻塞：队列只有一格，连着来
 // 两声只会响一声，而以**最后**那一格为准（状态机也是这么处理的，见 badge_state）。
 void badge_sound_play(badge_alert_kind_t kind);
+
+// badge_sound_busy 是否正在放（或正要放）。录音那条靠它避开 codec：两边都要碰 ES8311
+// 的采样格式，而 BSP 的约定是「调用方须串行化格式、休眠与唤醒」——录音期间来一声提示音
+// 就是一次格式互踩，而且症状是「录下来的东西是噪音」，不是一行报错。
+//
+// 反向的让路在 sound_task 里：它开播之前看 badge_voice_busy()，录音中就把这一声丢掉
+// （录音是几秒的主动操作，一声「有事等你」延后就没有意义了）。
+bool badge_sound_busy(void);

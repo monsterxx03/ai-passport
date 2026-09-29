@@ -8,6 +8,7 @@
 #include "esp_log.h"
 
 #include "bsp_audio.h"
+#include "badge_voice.h" // badge_voice_busy：录音时让路（codec 互斥，见 badge_sound.h）
 
 static const char *TAG = "badge_sound";
 
@@ -25,6 +26,9 @@ static const char *TAG = "badge_sound";
 #define SOUND_CHUNK_SAMPLES 512U
 
 static QueueHandle_t s_requests;
+// 正在放（含唤醒 codec 的那一段）。录音那条靠它避开：BSP 要求调用方串行化格式与休眠，
+// 两边同时碰 ES8311 的结果是录下来一段噪音，而不是一行报错。
+static volatile bool s_playing;
 
 // clip_for 返回这一种提示音的 PCM 与长度。
 //
@@ -59,6 +63,12 @@ static void sound_task(void *argument)
         if (kind == BADGE_ALERT_NONE) {
             continue;
         }
+        // 录音在用 codec：这一声丢掉。不为它排队——录音是几秒的主动操作，而「有事等你」
+        // 延后几秒就没有意义了；更糟的是两边同时碰 ES8311 会让录下来的东西变成噪音。
+        if (badge_voice_busy()) {
+            ESP_LOGI(TAG, "正在录音，这一声跳过");
+            continue;
+        }
         pcm = clip_for(kind, &samples);
         // codec 平时睡着：这一声的代价是「唤醒 → 写完 → 再睡」，而平时它不占电流。
         if (bsp_audio_wake() != ESP_OK) {
@@ -68,6 +78,7 @@ static void sound_task(void *argument)
         // 留痕：排查「怎么没响」时，这一行是「试过了」与「压根没到」的唯一分界。
         ESP_LOGI(TAG, "响一声（%s，%u 采样）", kind == BADGE_ALERT_DONE ? "done" : "ask",
                  (unsigned)samples);
+        s_playing = true;
         for (written = 0; written < samples; written += SOUND_CHUNK_SAMPLES) {
             size_t chunk = samples - written;
 
@@ -79,6 +90,8 @@ static void sound_task(void *argument)
                 break;
             }
         }
+        // 先清标志再睡：录音那条等在 s_playing 上，而睡下去之后 codec 就归它了。
+        s_playing = false;
         if (bsp_audio_sleep() != ESP_OK) {
             ESP_LOGW(TAG, "codec 没能睡着");
         }
@@ -117,4 +130,9 @@ void badge_sound_play(badge_alert_kind_t kind)
     if (xQueueOverwrite(s_requests, &kind) != pdTRUE) {
         ESP_LOGW(TAG, "提示音请求未能入队");
     }
+}
+
+bool badge_sound_busy(void)
+{
+    return s_playing;
 }

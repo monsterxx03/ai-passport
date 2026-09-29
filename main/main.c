@@ -31,6 +31,7 @@
 #include "badge_sound.h"
 #include "badge_state.h"
 #include "badge_ui.h"
+#include "badge_voice.h"
 #include "bsp_battery.h"
 #include "bsp_button.h"
 #include "bsp_display.h"
@@ -102,6 +103,10 @@ static badge_ble_state_t s_last_ble_state = BADGE_BLE_UNPAIRED;
 
 // 屏幕亮灭（只动背光）。判据是纯逻辑，在 badge_power 里，主机测试覆盖它。
 static badge_power_t s_power;
+
+// 上一次画过的「录音第几个十分之一秒」。倒计时是这一屏上唯一在动的数字，而每个 tick
+// 都重画整个屏幕是纯浪费——它在十分位变化时才动（10 fps），而那正是人眼能看见的粒度。
+static uint32_t s_voice_tenths;
 
 // set_backlight 是**唯一**写背光的地方：屏幕状态变了才写一次，
 // 而不是每个 tick 都写一遍 LEDC。
@@ -226,6 +231,8 @@ static void render(void)
     s_snapshot.passkey = badge_ble_passkey();
     // 顶栏那三个字母：和 send_line 用的是同一条判据（见 active_transport）。
     s_snapshot.transport = active_transport();
+    // 录音进度（屏幕上的倒计时）。录了多久只有采集那条任务知道，所以由它报出来。
+    s_snapshot.recording = badge_voice_progress(&s_snapshot.record_ms, &s_snapshot.record_limit_ms);
 
     // LVGL 不是线程安全的：这一屏的每一次修改都要在锁里。拿不到锁就跳过这一帧，
     // 下一轮再画——为了一帧画面去等，会把按键的响应一起拖住。
@@ -282,6 +289,14 @@ static bool send_line(const char *text, size_t length)
     return true;
 }
 
+// badge_voice 只认「一行怎么发出去」，而那条路由只有 send_line 知道（BLE 还是串口）——
+// 所以把它包一层交出去（badge_voice_init）。
+static bool voice_send(const char *line, size_t length, void *context)
+{
+    (void)context;
+    return send_line(line, length);
+}
+
 static void send_hello(void)
 {
     char buffer[128];
@@ -326,6 +341,31 @@ static bool handle_line(const badge_line_t *line)
     return badge_state_apply(&s_state, &s_message) || !was_connected;
 }
 
+// 主屏长按确定 = 说话。按一次开始录、再按一次结束并发送（见 badge_voice_toggle）。
+//
+// 每一次按键都在屏幕上留一句话：录音跑在 badge_voice 自己的任务里，而状态机只由 app 任务
+// 碰——没有这句话，用户按下去之后屏幕上是静止的，看起来就像按键坏了。
+static void handle_voice_key(void)
+{
+    switch (badge_voice_toggle()) {
+    case BADGE_VOICE_ACTION_STARTED:
+        badge_state_notice(&s_state, "录音中…再长按结束", BADGE_VOICE_MAX_MS);
+        break;
+    case BADGE_VOICE_ACTION_STOPPED:
+        // 结束时**不要**立刻说「已发送」：那一片片还在路上（实测 6 秒的语音要 3-4 秒传
+        // 完），真正的结果由 badge_voice_take_report 在 app 循环里补上。
+        badge_state_notice(&s_state, "发送中…", 20000U);
+        break;
+    case BADGE_VOICE_ACTION_BUSY:
+        badge_state_notice(&s_state, "上一条还在发", 3000U);
+        break;
+    case BADGE_VOICE_ACTION_NO_AUDIO:
+    default:
+        badge_state_notice(&s_state, "音频起不来", 4000U);
+        break;
+    }
+}
+
 // 状态屏上的长按确定 = 忘记配对的电脑。
 //
 // 为什么要按两次：这是个不可逆的动作，而且它**只做了一半**——本机忘掉之后，电脑
@@ -353,15 +393,30 @@ static void handle_key(const badge_key_event_t *event)
     static char payload[BADGE_ANSWER_MAX];
     size_t length = 0;
 
-    // 待答屏上长按确定是「提交」；状态屏上它本来没有含义，用它做「忘记电脑」。
-    // 判据用 ask_count 而不是「界面正在显示哪一屏」——状态机不知道界面在显示什么，
-    // 而「没有等待项」恰好就是「它没停在待答屏上」。
+    // 录音中短按确定 = 丢弃这一段（手滑了不用发上去）。它排在最前面：录音时屏幕上显示
+    // 的是倒计时，那一刻「确定」只该有这一个含义，别的路由都该让路。
+    if (event->key == BADGE_KEY_OK && badge_voice_progress(NULL, NULL)) {
+        badge_voice_cancel();
+        badge_state_notice(&s_state, "已取消", 2500U);
+        return;
+    }
+
+    // 主屏（没有等待项）上的两个长按。判据用 ask_count 而不是「界面正在显示哪一屏」
+    // ——状态机不知道界面在显示什么，而「没有等待项」恰好就是「它没停在待答屏上」：
     //
-    // 配对进行中不算「状态屏」：屏幕上此刻是那 6 位码，而「忘记」会把这次配对直接
-    // 搅黄——用户只是想把屏幕点亮，不该付出这个代价。
-    if (s_state.ask_count == 0U && event->key == BADGE_KEY_SUBMIT) {
+    //   长按确定 —— 说话：第一次按开始录，再按一次结束并发送（见 handle_voice_key）
+    //   长按上   —— 忘记配对的电脑（原先在长按确定上，让位给了上面那个）
+    //
+    // 配对进行中两个都不做：屏幕上此刻是那 6 位码，用户可能只是想把屏幕点亮，
+    // 不该因此把这次配对搅黄、也不该误录一段音。
+    if (s_state.ask_count == 0U &&
+        (event->key == BADGE_KEY_SUBMIT || event->key == BADGE_KEY_PREV)) {
         if (badge_ble_state() != BADGE_BLE_PAIRING) {
-            handle_forget(now_ms());
+            if (event->key == BADGE_KEY_SUBMIT) {
+                handle_voice_key();
+            } else {
+                handle_forget(now_ms());
+            }
         }
         return;
     }
@@ -448,6 +503,74 @@ static void badge_task(void *argument)
             touched = true;
         }
 
+        // 录音中每十分之一秒重画一次：倒计时不动的话，它看起来就像卡住了。
+        {
+            uint32_t elapsed = 0U;
+            uint32_t limit = 0U;
+
+            if (badge_voice_progress(&elapsed, &limit)) {
+                const uint32_t tenths = elapsed / 100U;
+
+                if (tenths != s_voice_tenths) {
+                    s_voice_tenths = tenths;
+                    dirty = true;
+                }
+            } else if (s_voice_tenths != 0U) {
+                s_voice_tenths = 0U; // 录完了：下一次录音从 0 开始比
+                dirty = true;
+            }
+        }
+
+        // 一次录音的结果（采集与发送跑在 badge_voice 自己的任务里）。在这里显示而不在
+        // 那边：状态机只由 app 任务碰。
+        {
+            badge_voice_report_t report;
+
+            if (badge_voice_take_report(&report)) {
+                char text[BADGE_DETAIL_MAX];
+
+                switch (report.outcome) {
+                case BADGE_VOICE_NO_AUDIO:
+                    (void)snprintf(text, sizeof(text), "音频起不来");
+                    break;
+                case BADGE_VOICE_SEND_FAILED:
+                    (void)snprintf(text, sizeof(text), "发送失败（链路不在？）");
+                    break;
+                case BADGE_VOICE_CANCELLED:
+                    // 按键那条已经说过一次「已取消」，这里再来一句是给它一个确定的收尾
+                    // （比如录到上限被丢弃时，用户看到的是这一句）。
+                    (void)snprintf(text, sizeof(text), "已取消");
+                    break;
+                case BADGE_VOICE_OK:
+                default:
+                    // 说「录了几秒」而不说「发了几片」：片数是给主机对账用的（它按 end
+                    // 里的 parts 能看出少了），而人要知道的是「刚才那句话上去了没有、
+                    // 有多长」。丢了片要说出来——丢片的语音听起来像人吞了半句话。
+                    if (report.peak < 200U) {
+                        // 数字都对、但整段几乎没有波形：麦克风没通、增益为 0，或者只是
+                        // 没人说话。这一句比「已发送」有用得多——它把「链路成功」和
+                        // 「真的录到东西」分开了（第一次上真机时最常见的失败就在这）。
+                        (void)snprintf(text, sizeof(text), "录到了 %u.%us，但没声音（峰值 %u）",
+                                       (unsigned)(report.ms / 1000U),
+                                       (unsigned)((report.ms % 1000U) / 100U),
+                                       (unsigned)report.peak);
+                    } else if (report.parts_failed > 0U) {
+                        (void)snprintf(text, sizeof(text), "已发送 %u.%us（丢了 %u 片）",
+                                       (unsigned)(report.ms / 1000U),
+                                       (unsigned)((report.ms % 1000U) / 100U),
+                                       report.parts_failed);
+                    } else {
+                        (void)snprintf(text, sizeof(text), "已发送 %u.%us 的语音",
+                                       (unsigned)(report.ms / 1000U),
+                                       (unsigned)((report.ms % 1000U) / 100U));
+                    }
+                    break;
+                }
+                badge_state_notice(&s_state, text, 6000U);
+                dirty = true;
+            }
+        }
+
         if (now - last_battery_ms >= BADGE_BATTERY_SAMPLE_MS) {
             int percent = bsp_battery_soc();
 
@@ -515,8 +638,11 @@ static void badge_task(void *argument)
             bool flip = false;
             // 配对进行中也要保持亮屏：那 6 位码是用户此刻唯一要看的东西，屏幕在
             // 这时候熄灭等于把任务藏起来（而且他还在另一台设备上等着输）。
+            // 录音与发送中同理：屏幕上正显示「录音中 / 发送中」，而那正是手上这件事
+            // 的进度——30 秒的录音足够长，撞上一次熄屏就是「我以为它没在录」。
             bool keep_awake = s_state.ask_count > 0U ||
-                              s_last_ble_state == BADGE_BLE_PAIRING;
+                              s_last_ble_state == BADGE_BLE_PAIRING ||
+                              badge_voice_busy();
 
             if (touched) {
                 flip = badge_power_activity(&s_power, now);
@@ -572,6 +698,10 @@ void app_main(void)
     // 提示音：起播放任务并初始化 codec（初始化完就送去睡眠，只在响的时候唤醒）。
     // 同样地，它起不来只记一行日志——这条链路上的每一部分都是可选的。
     badge_sound_init();
+
+    // 录音：只记住出口（一行怎么发出去），任务等按键时才起。要放在 badge_sound_init 之后
+    // ——两者共用 codec，而初始化那一步是提示音那边做的（它先来）。
+    badge_voice_init(voice_send, NULL);
 
     s_line_queue = xQueueCreate(BADGE_LINE_QUEUE_DEPTH, sizeof(badge_line_t));
     s_key_queue = xQueueCreate(BADGE_KEY_QUEUE_DEPTH, sizeof(badge_key_event_t));

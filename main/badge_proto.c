@@ -264,6 +264,21 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
         }
         return false;
     }
+    if (strcmp(kind, "voice_text") == 0) {
+        // 刚才那段语音转成了什么，以及它到哪了。设备只是**显示**它——和这条链路上别的
+        // 消息一样，这里不理解"那句话说了什么"。
+        char which[BADGE_META_MAX];
+
+        out->kind = BADGE_MSG_VOICE_TEXT;
+        out->voice_text[0] = '\0';
+        (void)take_string(&root, "text", out->voice_text, sizeof(out->voice_text));
+        which[0] = '\0';
+        (void)take_string(&root, "state", which, sizeof(which));
+        // 认不出的 state 按 sent 处理：那两种里更"靠后"的一种，说「已发送」而不是让用户
+        // 以为自己的话还在排队（真在排队时主机下一次会照实说）。
+        out->voice_state = (strcmp(which, "queued") == 0) ? BADGE_VOICE_QUEUED : BADGE_VOICE_SENT;
+        return true;
+    }
     return false; // 不认识的消息类型：丢掉
 }
 

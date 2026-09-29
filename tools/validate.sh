@@ -45,6 +45,14 @@ run_static_checks() {
         -o "${test_dir}/test_badge_state"
     "${test_dir}/test_badge_state"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_badge_voice.c main/badge_voice.c \
+        -o "${test_dir}/test_badge_voice"
+    "${test_dir}/test_badge_voice"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_badge_adpcm.c main/badge_adpcm.c \
+        -o "${test_dir}/test_badge_adpcm"
+    "${test_dir}/test_badge_adpcm"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
         tests/test_badge_power.c main/badge_power.c \
         -o "${test_dir}/test_badge_power"
     "${test_dir}/test_badge_power"

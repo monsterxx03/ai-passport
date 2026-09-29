@@ -163,6 +163,20 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
         set_notice(state, message->message[0] != '\0' ? message->message : "主机拒绝了这次回答",
                    5000U);
         return true;
+    case BADGE_MSG_VOICE_TEXT: {
+        // 刚才那段语音转成了什么。它进的是状态屏那一行一次性提示：这是**回执**，不是
+        // 状态——状态屏上长期挂着的东西是「谁在等你」。
+        //
+        // 「排队中」与「已发送」分开说：前者意味着这句话还没人看到（会话在跑，它在等一个
+        // steer 点），而那时用户最需要知道的就是这个。
+        char line[BADGE_DETAIL_MAX + BADGE_META_MAX];
+
+        (void)snprintf(line, sizeof(line), "%s%s",
+                       message->voice_state == BADGE_VOICE_QUEUED ? "排队中：" : "已发送：",
+                       message->voice_text);
+        set_notice(state, line, 8000U);
+        return true;
+    }
     case BADGE_MSG_ALERT:
         // 主机说「响一声」：它知道自己在不在前台、用户正在看哪个会话，而这块屏上
         // 一条信息都没有。这里只记下是哪一种，放音频是调用方的事（见 badge_sound）。

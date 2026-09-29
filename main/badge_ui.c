@@ -313,6 +313,19 @@ static void set_status_footer(const badge_ui_snapshot_t *snapshot)
 {
     char footer[64];
 
+    if (snapshot->recording) {
+        // 录音优先于一切，包括上面那条一次性提示：此刻最要紧的是「它在录、录了多久、
+        // 离上限还有多远」。一条上一句话的提示（「已发送：…」）停在那里几秒，会让正在
+        // 录音的人以为自己按下去没生效。
+        const unsigned seconds = (unsigned)(snapshot->record_ms / 1000U);
+        const unsigned tenths = (unsigned)((snapshot->record_ms % 1000U) / 100U);
+        const unsigned limit = (unsigned)(snapshot->record_limit_ms / 1000U);
+
+        (void)snprintf(footer, sizeof(footer), LV_SYMBOL_BULLET " 录音中 %u.%us / %us",
+                       seconds, tenths, limit);
+        lv_label_set_text(s_st_footer, footer);
+        return;
+    }
     if (snapshot->notice != NULL) {
         lv_label_set_text(s_st_footer, snapshot->notice);
         return;
