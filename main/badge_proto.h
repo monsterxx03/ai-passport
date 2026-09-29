@@ -102,6 +102,11 @@ typedef struct {
     char status[BADGE_META_MAX];
     char label[BADGE_META_MAX];
     char detail[BADGE_DETAIL_MAX];
+    // tools 是本轮**已开始执行**的工具调用数（主机侧数的是「执行器即将跑它」那个事件）。
+    //
+    // 0 的两种含义都不该画：这一轮还没碰过工具，或者这个字段对端根本不发（老主机）。
+    // 屏幕上的规则因此只有一条——> 0 才显示那一行。
+    unsigned long tools;
 } badge_session_t;
 
 typedef struct {

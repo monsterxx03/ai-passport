@@ -102,6 +102,7 @@ static void test_state_message_moves_the_view(void)
 
     badge_state_init(&state);
     fill_state(&message, "s1", "执行");
+    message.sessions[0].tools = 4UL;
     assert(badge_state_apply(&state, &message));
 
     badge_state_to_ui(&state, &snapshot);
@@ -109,6 +110,15 @@ static void test_state_message_moves_the_view(void)
     assert(snapshot.has_session);
     assert(strcmp(snapshot.state_label, "执行") == 0);
     assert(strcmp(snapshot.session_title, "修 lint") == 0);
+    assert(snapshot.tool_calls == 4UL);
+
+    // 计数往前走（这一轮又跑起来一个工具）必须算作**变了**：去重是按整份会话表
+    // memcmp 的，漏掉这个字段的话，屏幕上那行数字会停在上一个读数上——而它存在的
+    // 全部意义就是「在动」。
+    message.sessions[0].tools = 5UL;
+    assert(badge_state_apply(&state, &message));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.tool_calls == 5UL);
 
     // 同样的内容再来一次不算变化：界面不该为没变的东西重绘。
     assert(!badge_state_apply(&state, &message));

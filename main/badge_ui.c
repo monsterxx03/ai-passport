@@ -40,10 +40,10 @@ static lv_obj_t *s_pair_scr;
 
 static lv_obj_t *s_st_battery;
 static lv_obj_t *s_st_transport;
-static lv_obj_t *s_st_dot;
 static lv_obj_t *s_st_state;
 static lv_obj_t *s_st_title;
 static lv_obj_t *s_st_detail;
+static lv_obj_t *s_st_tools;
 static lv_obj_t *s_st_footer;
 static lv_obj_t *s_inf_title;
 static lv_obj_t *s_inf_battery;
@@ -146,14 +146,14 @@ static void build_status_screen(void)
 
     // 顶栏就是标题栏：左边是**当前会话的名字**（没有会话时回退成品牌名，这一栏不空
     // 着），右边是传输图标 + 电量。会话名放这里而不是主体里，是因为它属于「这是哪一
-    // 个窗口」这一层，而主体那两行要说的是「它此刻在干什么」。
+    // 个窗口」这一层，而主体那几行要说的是「它此刻在干什么、做到哪了」。
     s_st_title = make_label(s_status_scr, COL_MUTED);
     // 宽度按右侧那一簇留出来：图标 ~14 + 间距 8 + 电量 ~34 + 右边距 20。
     one_line(s_st_title, 140, false);
-    lv_obj_align(s_st_title, LV_ALIGN_TOP_LEFT, 20, 16);
+    lv_obj_align(s_st_title, LV_ALIGN_TOP_LEFT, 20, 12);
 
     s_st_battery = make_label(s_status_scr, COL_MUTED);
-    lv_obj_align(s_st_battery, LV_ALIGN_TOP_RIGHT, -20, 16);
+    lv_obj_align(s_st_battery, LV_ALIGN_TOP_RIGHT, -20, 12);
 
     // 传输指示贴在电量左边成一簇：屏幕上画的和实际走的必须是同一条判据（见 main.c 的
     // active_transport）。跟着标题排版的话，标题一长就会把它顶出屏幕。两枚图标走图标
@@ -162,31 +162,34 @@ static void build_status_screen(void)
     lv_obj_set_style_text_font(s_st_transport, FONT_ICON, 0);
     lv_obj_align_to(s_st_transport, s_st_battery, LV_ALIGN_OUT_LEFT_MID, -6, 0);
 
-    // 头像占原来那个圆的位置。它不再靠颜色说话——一张脸比一个色块更像「有人在」；
-    // 颜色改由下面那颗小圆点承担（见 render_status）。
+    // 头像就是原来那个圆的位置，它不再靠颜色说话——一张脸比一个色块更像「有人在」。
+    //
+    // 状态色**现在落在下面那行文字上**（见 render_status）：这块屏上从 44 到 261 只有
+    // 217px，而头像（120）加三行字（3×31=93）正好是 213 —— 再单占一行去放一颗色点
+    // 就没地方了，何况那颗点和「执行 / 思考」本来就是同一件事。
     lv_obj_t *avatar = lv_image_create(s_status_scr);
 
     lv_image_set_src(avatar, &badge_avatar);
-    lv_obj_align(avatar, LV_ALIGN_TOP_MID, 0, 48);
-
-    s_st_dot = plain(s_status_scr);
-    lv_obj_set_size(s_st_dot, 10, 10);
-    lv_obj_set_style_radius(s_st_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(COL_THINK), 0);
-    lv_obj_align(s_st_dot, LV_ALIGN_TOP_MID, 0, 176);
+    lv_obj_align(avatar, LV_ALIGN_TOP_MID, 0, 44);
 
     s_st_state = make_label(s_status_scr, COL_TEXT);
     one_line(s_st_state, 200, true);
-    lv_obj_align(s_st_state, LV_ALIGN_TOP_MID, 0, 194);
+    lv_obj_align(s_st_state, LV_ALIGN_TOP_MID, 0, 168);
 
-    // 会话名搬去顶栏之后，主体这里是「状态 + 它此刻在干什么」两行，挨着排。
+    // 三行挨着排：状态 → 它此刻在干什么 → 本轮做到第几个工具。行盒是字体的
+    // line_height（31），本身已经含了行距，所以行间没有额外空隙——上面那两行原本就
+    // 是这么排的。
     s_st_detail = make_label(s_status_scr, COL_MUTED);
     one_line(s_st_detail, 200, true);
-    lv_obj_align(s_st_detail, LV_ALIGN_TOP_MID, 0, 224);
+    lv_obj_align(s_st_detail, LV_ALIGN_TOP_MID, 0, 199);
+
+    s_st_tools = make_label(s_status_scr, COL_MUTED);
+    one_line(s_st_tools, 200, true);
+    lv_obj_align(s_st_tools, LV_ALIGN_TOP_MID, 0, 230);
 
     s_st_footer = make_label(s_status_scr, COL_MUTED);
     one_line(s_st_footer, 220, true);
-    lv_obj_align(s_st_footer, LV_ALIGN_BOTTOM_MID, 0, -34);
+    lv_obj_align(s_st_footer, LV_ALIGN_BOTTOM_MID, 0, -24);
 }
 
 static void build_ask_screen(void)
@@ -427,6 +430,25 @@ static void render_info(const badge_ui_snapshot_t *snapshot)
     lv_label_set_text(s_inf_cost, (info != NULL) ? info->cost : "");
 }
 
+// render_tool_line 画「第 N 个工具调用」那一行。
+//
+// 0 就不画：它要么是这一轮还没碰过工具，要么是主机根本不发这个字段（老主机），而两种
+// 情况在屏幕上是同一件事——没有进度可报。留着上一次的读数最坏，那个数字会被读成
+// 「还在跑」，而它其实早跑完了。
+//
+// 只在状态屏的主路径上画：链路断了、或者根本没有会话时，清掉。
+static void render_tool_line(const badge_ui_snapshot_t *snapshot)
+{
+    char line[32];
+
+    if (!snapshot->connected || !snapshot->has_session || snapshot->tool_calls == 0UL) {
+        lv_label_set_text(s_st_tools, "");
+        return;
+    }
+    (void)snprintf(line, sizeof(line), "第 %lu 个工具调用", snapshot->tool_calls);
+    lv_label_set_text(s_st_tools, line);
+}
+
 static void render_status(const badge_ui_snapshot_t *snapshot)
 {
     set_battery(s_st_battery, snapshot);
@@ -450,11 +472,13 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
                           : "TACHI");
     marquee(s_st_title, snapshot->screen_on);
     marquee(s_st_detail, snapshot->screen_on);
+    render_tool_line(snapshot);
 
     if (!snapshot->connected) {
         // 链路断了：屏幕上必须说清楚，否则「空闲」会被读成「agent 没在干活」。
         lv_label_set_text(s_st_state, "等电脑");
-        lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(COL_MUTED), 0);
+        // 状态色在这块屏上落在那一行字上（那颗色点已经让位给第三行，见 build_status_screen）。
+        lv_obj_set_style_text_color(s_st_state, lv_color_hex(COL_MUTED), 0);
         // 「等电脑」底下藏着四种处境，用户要做的动作完全不同——糊成一句「还没有
         // 连上 tachi」等于什么都没说，而这块屏幕存在的意义就是回答「现在需要你
         // 做什么」。
@@ -481,7 +505,7 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
         set_status_footer(snapshot);
         return;
     }
-    lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(status_color(snapshot)), 0);
+    lv_obj_set_style_text_color(s_st_state, lv_color_hex(status_color(snapshot)), 0);
 
     if (!snapshot->has_session) {
         lv_label_set_text(s_st_state, "空闲");

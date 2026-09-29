@@ -158,6 +158,7 @@ static bool parse_state(const bjson_val_t *root, badge_msg_t *out)
         (void)take_string(&item, "status", session->status, sizeof(session->status));
         (void)take_string(&item, "label", session->label, sizeof(session->label));
         (void)take_string(&item, "detail", session->detail, sizeof(session->detail));
+        session->tools = take_ulong(&item, "tools");
         out->session_count += 1U;
     }
     return true;

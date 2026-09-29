@@ -19,7 +19,7 @@ static void test_state(void)
     static const char line[] =
         "{\"t\":\"state\",\"seq\":5,\"sessions\":["
         "{\"id\":\"2026-09-28-ab12\",\"title\":\"修 lint\",\"status\":\"tool_running\","
-        "\"label\":\"执行\",\"detail\":\"调用 Bash\"},"
+        "\"label\":\"执行\",\"detail\":\"调用 Bash\",\"tools\":3},"
         "{\"id\":\"s2\",\"title\":\"第二个\",\"status\":\"thinking\",\"label\":\"思考\"}]}";
 
     assert(parse(line));
@@ -29,6 +29,10 @@ static void test_state(void)
     assert(strcmp(message.sessions[0].id, "2026-09-28-ab12") == 0);
     assert(strcmp(message.sessions[0].title, "修 lint") == 0);
     assert(strcmp(message.sessions[0].detail, "调用 Bash") == 0);
+    // 本轮的计数。第二条**没有**这个字段：老主机不发它，而 0 与「不发」在屏幕上
+    // 必须是同一件事（不画那一行，见 badge_ui 的 render_tool_line）。
+    assert(message.sessions[0].tools == 3UL);
+    assert(message.sessions[1].tools == 0UL);
     assert(strcmp(message.sessions[1].label, "思考") == 0);
     // 缺 detail 的会话留空，不是垃圾内容。
     assert(message.sessions[1].detail[0] == '\0');

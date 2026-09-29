@@ -67,6 +67,9 @@ typedef struct {
     char session_title[BADGE_TEXT_MAX];
     char state_label[BADGE_META_MAX];
     char state_detail[BADGE_DETAIL_MAX];
+    // tool_calls 是本轮已开始执行的工具调用数（0 = 这一轮还没碰过工具，或者主机不发
+    // 这个字段）。界面只在 > 0 时画那一行——见 badge_session_t.tools。
+    unsigned long tool_calls;
     size_t session_count; // >1 时底栏说明还有别人
     size_t session_total; // 主机报的会话数（≥ session_count）：底栏按它算，才不会少报
 

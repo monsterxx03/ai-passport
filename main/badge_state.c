@@ -418,6 +418,7 @@ void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot
         (void)memcpy(snapshot->session_title, shown->title, sizeof(snapshot->session_title));
         (void)memcpy(snapshot->state_label, shown->label, sizeof(snapshot->state_label));
         (void)memcpy(snapshot->state_detail, shown->detail, sizeof(snapshot->state_detail));
+        snapshot->tool_calls = shown->tools;
     }
 
     if (state->ask_count > 0U) {
