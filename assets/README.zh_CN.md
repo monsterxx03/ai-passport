@@ -35,6 +35,10 @@
 
 可复用的音乐与音效源码放在 `music/`。
 
+| 文件 | 格式 | 用途与来源 |
+| --- | --- | --- |
+| [`music/turn_done.wav`](music/turn_done.wav) | 2.0 秒，44.1 kHz，16 位单声道 WAV，177 KB | 设备「回合完成」提示音的母版。为本项目制作，不含第三方素材，可随仓库一起分发。`uv run tools/gen_badge_sound.py assets/music/turn_done.wav --kind done` 会重采样为 16 kHz 单声道并覆盖入库的 `main/badge_sound_done_16k.c`（27628 采样 = 1.73 秒，约占应用镜像 54 KB）。 |
+
 - 记录来源、许可、采样率、位深、声道、转换命令与目标路径。
 - 与当前 BSP 音频路径匹配时优先采用 16 kHz、16 位单声道 PCM。
 - 嵌入音频前评估 Flash 与内部 RAM 成本；长录音应流式或分块。

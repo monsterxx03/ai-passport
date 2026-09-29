@@ -24,17 +24,18 @@ tachi 干活时会停下来等人两次：一次是它要执行一条被判为�
 配对屏压过其它三块：码在屏上的时候，你唯一的任务就是把它敲进电脑，别的信息全是干扰。
 
 **它会自己响**，而且是**两种不同的声音**：出现一条等你回答的等待时（权限确认或提问）是一声
-上行的短铃；一个回合跑完时是两声下行音。人不用看屏幕就能分开「有事找你」和「好了，没你的事」。
+上行的短铃；一个回合跑完时是另一声。人不用看屏幕就能分开「有事找你」和「好了，没你的事」。
 
 判据在电脑那边——tachi 的窗口不在前台、**或者**这件事不属于你正开着的那个会话：你正看着它
 就不出声（那样的一声只是噪音）。判定发生在事情发生的那一刻，之后你走开也不会补响。设置页里
 有开关（`badge.alert`，默认开）。
 
-两段音频都是生成物（`tools/gen_badge_sound.py` 生成的 PCM，随仓库分发）。要换成自己的素材：
+两段音频都是生成物（`tools/gen_badge_sound.py` 生成的 PCM，随仓库分发）；「回合完成」那一声
+是从 `assets/music/turn_done.wav` 生成的。要换成自己的素材（素材放在 `assets/music/`）：
 
 ```bash
-uv run tools/gen_badge_sound.py 你的.wav                    # 当「有事等你」那一声
-uv run tools/gen_badge_sound.py 你的.wav --kind done        # 当「回合完成」那一声
+uv run tools/gen_badge_sound.py assets/music/你的.wav             # 当「有事等你」那一声
+uv run tools/gen_badge_sound.py assets/music/你的.wav --kind done # 当「回合完成」那一声
 ```
 
 （16 kHz 单声道 WAV；m4a/mp3 先用 afconvert 转一下。）⚠ 换素材留意授权：产物是要提交的，

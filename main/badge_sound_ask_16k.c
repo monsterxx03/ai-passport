@@ -1,7 +1,7 @@
 // 生成的提示音（tools/gen_badge_sound.py），别手改。
 //
 // 向上的一声短铃（E6 + 一点二次谐波） —— 4000 个采样 = 0.25 秒 @ 16000 Hz / 单声道 / 16-bit。
-// 来源：本脚本合成（向上的一声短铃（E6 + 一点二次谐波））
+// 来源：本脚本合成
 // 换素材：uv run tools/gen_badge_sound.py <自己的 wav> --kind ask，然后重新构建。
 #include "badge_sound.h"
 

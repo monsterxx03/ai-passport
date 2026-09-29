@@ -26,7 +26,7 @@ The pairing screen overrides the other three: while that code is up, typing it i
 your only job and everything else is noise.
 
 **It also makes a sound — two different ones**: a rising chime when something starts waiting for you
-(a permission or a question), and two falling notes when a turn finishes. You can tell "someone needs
+(a permission or a question), and another one when a turn finishes. You can tell "someone needs
 you" from "that's done, nothing for you" without looking at the screen.
 
 The rule lives on the computer — tachi's window is not in the foreground, **or** the event belongs to
@@ -35,11 +35,12 @@ would just be noise). The decision is made the moment the event happens, so walk
 does not re-alert. There is a switch in the settings page (`badge.alert`, on by default).
 
 Both clips are generated artifacts (PCM from `tools/gen_badge_sound.py`, shipped with the
-repository). To use your own:
+repository); the "turn finished" one is generated from `assets/music/turn_done.wav`. To use your own
+(keep the source in `assets/music/`):
 
 ```bash
-uv run tools/gen_badge_sound.py your.wav                    # the "something is waiting" sound
-uv run tools/gen_badge_sound.py your.wav --kind done        # the "turn finished" sound
+uv run tools/gen_badge_sound.py assets/music/your.wav             # the "something is waiting" sound
+uv run tools/gen_badge_sound.py assets/music/your.wav --kind done # the "turn finished" sound
 ```
 
 (16 kHz mono WAV; run `afconvert` first for m4a/mp3.) ⚠ Mind the rights to whatever you use: the

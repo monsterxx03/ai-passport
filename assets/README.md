@@ -37,6 +37,10 @@ Store reusable source images and generated display assets in `images/`.
 
 Store reusable music and sound-effect sources in `music/`.
 
+| File | Format | Use and source |
+| --- | --- | --- |
+| [`music/turn_done.wav`](music/turn_done.wav) | 2.0 s, 44.1 kHz, 16-bit mono WAV, 177 KB | Master for the badge's "a turn finished" alert. Made for this project; contains no third-party material, so it may be redistributed with the repository. `uv run tools/gen_badge_sound.py assets/music/turn_done.wav --kind done` resamples it to 16 kHz mono and rewrites the committed `main/badge_sound_done_16k.c` (27,628 samples = 1.73 s, about 54 KB of the application image). |
+
 - Document the source, license, sample rate, bit depth, channels, conversion command, and destination.
 - Prefer 16 kHz, 16-bit mono PCM when it matches the current BSP audio path.
 - Check Flash and internal-RAM cost before embedding audio; stream or chunk long recordings.

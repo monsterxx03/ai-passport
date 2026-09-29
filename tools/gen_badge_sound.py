@@ -3,14 +3,17 @@
 # ///
 """生成设备侧的提示音 PCM：main/badge_sound_ask_16k.c 与 main/badge_sound_done_16k.c。
 
-    uv run tools/gen_badge_sound.py                    # 重新合成两段默认提示音
-    uv run tools/gen_badge_sound.py my.wav             # 用自己的素材当「有事等你」那一声
-    uv run tools/gen_badge_sound.py my.wav --kind done # ……当「回合完成」那一声
+    uv run tools/gen_badge_sound.py                                # 重新合成两段默认提示音
+    uv run tools/gen_badge_sound.py assets/music/x.wav             # 用自己的素材当「有事等你」那一声
+    uv run tools/gen_badge_sound.py assets/music/x.wav --kind done # ……当「回合完成」那一声
 
 两段音频是**两件事**，所以是两份文件、两个符号（设备按主机发来的 kind 选）：
 
   ask   有事等你：权限确认，或者模型提了个问题——需要你现在动手
   done  一个回合跑完了：不需要你做什么，只是告诉你「好了」
+
+素材本身放 assets/music/（见 assets/README.md 的「音乐与音效」），别跟 markdown 混在
+assets/ 根目录下。
 
 只吃 **WAV**：mp3/m4a 的解码要么拖进 ffmpeg 这个外部依赖，要么塞一个解码器进固件，而换
 素材一年也就一两次——先用 macOS 自带的 afconvert 转一下就行：
@@ -99,7 +102,38 @@ def trim_and_shape(data: np.ndarray) -> np.ndarray:
     return data / np.max(np.abs(data))
 
 
-def emit(kind: str, samples: np.ndarray, source: str) -> None:
+def source_label(path: str) -> str:
+    """素材在仓库里就写相对路径：绝对路径（/Users/…）进不了提交，别人也读不到。
+
+    仓库外的素材（自己录的一段）没有相对路径可写，就照实写绝对路径——它是本地生成的，
+    提醒读的人「这一份不是从仓库里的素材来的」。
+    """
+    resolved = pathlib.Path(os.path.abspath(path))
+    try:
+        return str(resolved.relative_to(ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+def custom_sources() -> list[str]:
+    """哪几种提示音现在装的是自定义素材——读生成文件头上那行「来源」。
+
+    「来源」是生成器自己写的，所以它同时是「这份 PCM 从哪来」的唯一记录：素材文件删了、
+    换了电脑，这行还在，而它说的是实话还是默认合成就靠它区分。
+    """
+    found = []
+    for kind in KINDS:
+        path = ROOT / "main" / f"badge_sound_{kind}_16k.c"
+        if not path.exists():
+            continue
+        for line in path.read_text().splitlines()[:8]:
+            if line.startswith("// 来源：") and "本脚本合成" not in line:
+                found.append(f"{kind}（{line[len('// 来源：'):]}）")
+                break
+    return found
+
+
+def emit(kind: str, samples: np.ndarray, note: str, source: str) -> None:
     out = str(ROOT / "main" / f"badge_sound_{kind}_16k.c")
     pcm = np.clip(samples * TONE_PEAK * 32767.0, -32768, 32767).astype("<i2")
     rows = [", ".join(str(int(v)) for v in pcm[i:i + 16]) for i in range(0, len(pcm), 16)]
@@ -107,7 +141,7 @@ def emit(kind: str, samples: np.ndarray, source: str) -> None:
     with open(out, "w") as f:
         f.write(f"""// 生成的提示音（tools/gen_badge_sound.py），别手改。
 //
-// {KINDS[kind]["note"]} —— {len(pcm)} 个采样 = {len(pcm) / HZ:.2f} 秒 @ {HZ} Hz / 单声道 / 16-bit。
+// {note} —— {len(pcm)} 个采样 = {len(pcm) / HZ:.2f} 秒 @ {HZ} Hz / 单声道 / 16-bit。
 // 来源：{source}
 // 换素材：uv run tools/gen_badge_sound.py <自己的 wav> --kind {kind}，然后重新构建。
 #include "badge_sound.h"
@@ -140,8 +174,14 @@ def main() -> None:
 
     if path is None:
         # 不带参数：两段默认音都重新合成一遍（幂等）。
+        #
+        # 「默认」会盖掉已经装上的自定义素材，而这一步不可逆——素材要是自己录在电脑上的，
+        # 盖完就没了。所以先说出来，别让人事后才发现那一声变了。
+        replaced = custom_sources()
+        if replaced:
+            print("注意：会把已装的自定义素材换成默认合成音——" + "、".join(replaced), file=sys.stderr)
         for k in KINDS:
-            emit(k, synth(k), f"本脚本合成（{KINDS[k]['note']}）")
+            emit(k, synth(k), KINDS[k]["note"], "本脚本合成")
         return
 
     if not os.path.exists(path):
@@ -151,7 +191,7 @@ def main() -> None:
                          f"  afconvert -f WAVE -d LEI16@16000 -c 1 {path} out.wav")
     if subprocess.run(["which", "afconvert"], capture_output=True).returncode != 0:
         print("提示：本机没有 afconvert（非 macOS），素材得自己先转成 16 kHz 单声道 WAV。")
-    emit(kind, trim_and_shape(read_wav(path)), os.path.abspath(path))
+    emit(kind, trim_and_shape(read_wav(path)), "自定义素材", source_label(path))
 
 
 if __name__ == "__main__":
