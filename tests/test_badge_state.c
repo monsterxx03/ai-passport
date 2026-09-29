@@ -210,7 +210,7 @@ static void test_multi_select_requires_an_explicit_submit(void)
     assert(state.picked[0] == 2U);
 
     // 长按提交。
-    assert(badge_state_key(&state, BADGE_KEY_BACK, payload, sizeof(payload), &length));
+    assert(badge_state_key(&state, BADGE_KEY_SUBMIT, payload, sizeof(payload), &length));
     assert(answer_ref(length) == 3UL);
 
     // 只勾了「乙」，答案里就该只有它。
@@ -246,7 +246,7 @@ static void test_multiple_questions_advance_then_submit(void)
     assert(strstr(payload, "乙") != NULL); // 第一题选的是第二项
 }
 
-// 单选时可以长按退回上一题：答错一题不该整条重来。
+// 单选题答错一题不该整条重来：长按上键退回上一题。
 static void test_single_select_can_go_back(void)
 {
     badge_msg_t message;
@@ -257,10 +257,74 @@ static void test_single_select_can_go_back(void)
     fill_questions(&message, 6UL, false, 2U);
     assert(badge_state_apply(&state, &message));
 
+    // 第一题按确定会自动进入第二题（单选没有「跳过去不答」的中间态）。
     (void)badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length);
-    (void)badge_state_key(&state, BADGE_KEY_BACK, payload, sizeof(payload), &length);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 1U);
+
+    (void)badge_state_key(&state, BADGE_KEY_PREV, payload, sizeof(payload), &length);
     badge_state_to_ui(&state, &snapshot);
     assert(snapshot.question_index == 0U);
+    assert(snapshot.selection == 0U); // 回到的题也从第一项开始
+}
+
+// 多选 + 多题：短按确定被「勾选」占着、长按确定是提交，所以换题只能由上/下键的长按
+// 承担。少了这条通道，第一题是多选时整条 ask 都答不完——屏幕只会反复说
+// 「还有问题没有作答」，而没有任何键能走到第二题。
+static void test_multi_select_walks_between_questions(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+    const char *first;
+    const char *second;
+
+    badge_state_init(&state);
+    fill_questions(&message, 9UL, true, 2U); // 两题都是多选
+    assert(badge_state_apply(&state, &message));
+
+    // 第一题：勾第一项，长按下键去第二题。
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(!badge_state_key(&state, BADGE_KEY_NEXT, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 1U);
+    assert(snapshot.checked == 0U); // 新题从干净的勾选开始
+
+    // 第二题：勾第二项，长按提交。两题都答了，所以这次必须发出去。
+    (void)badge_state_key(&state, BADGE_KEY_DOWN, payload, sizeof(payload), &length);
+    assert(!badge_state_key(&state, BADGE_KEY_OK, payload, sizeof(payload), &length));
+    assert(badge_state_key(&state, BADGE_KEY_SUBMIT, payload, sizeof(payload), &length));
+    assert(answer_ref(length) == 9UL);
+
+    // 每题各自的答案都在，并且按题号顺序配对（第一题勾的是甲，第二题是乙）。
+    first = strstr(payload, "甲");
+    second = strstr(payload, "乙");
+    assert(first != NULL && second != NULL && first < second);
+}
+
+// 两端的边界：第一题上「上一题」、末题上「下一题」都不动，也都不会顺手提交。
+static void test_question_navigation_stops_at_the_ends(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t length = 0;
+
+    badge_state_init(&state);
+    fill_questions(&message, 10UL, false, 2U);
+    assert(badge_state_apply(&state, &message));
+
+    assert(!badge_state_key(&state, BADGE_KEY_PREV, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 0U);
+
+    assert(!badge_state_key(&state, BADGE_KEY_NEXT, payload, sizeof(payload), &length));
+    assert(!badge_state_key(&state, BADGE_KEY_NEXT, payload, sizeof(payload), &length));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.question_index == 1U);
+
+    // 跳过去的那题没作答：提交要被拒，而不是发出一个残缺的 answers。
+    assert(!badge_state_key(&state, BADGE_KEY_SUBMIT, payload, sizeof(payload), &length));
+    assert(strcmp(state.notice, "还有问题没有作答") == 0);
 }
 
 // 主机拒绝了回答：屏幕上要看得见，否则按下去没反应像是设备坏了。
@@ -352,6 +416,8 @@ int main(void)
     test_multi_select_requires_an_explicit_submit();
     test_multiple_questions_advance_then_submit();
     test_single_select_can_go_back();
+    test_multi_select_walks_between_questions();
+    test_question_navigation_stops_at_the_ends();
     test_error_sets_a_visible_notice();
     test_queue_is_bounded();
     test_keys_do_nothing_without_an_ask();

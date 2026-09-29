@@ -121,22 +121,28 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
     (void)context;
     switch (button) {
     case BSP_BTN_UP:
-        if (event != BSP_BTN_CLICK) {
+        if (event == BSP_BTN_CLICK) {
+            queued.key = BADGE_KEY_UP;
+        } else if (event == BSP_BTN_LONG) {
+            queued.key = BADGE_KEY_PREV;
+        } else {
             return;
         }
-        queued.key = BADGE_KEY_UP;
         break;
     case BSP_BTN_DOWN:
-        if (event != BSP_BTN_CLICK) {
+        if (event == BSP_BTN_CLICK) {
+            queued.key = BADGE_KEY_DOWN;
+        } else if (event == BSP_BTN_LONG) {
+            queued.key = BADGE_KEY_NEXT;
+        } else {
             return;
         }
-        queued.key = BADGE_KEY_DOWN;
         break;
     case BSP_BTN_OK:
         if (event == BSP_BTN_CLICK) {
             queued.key = BADGE_KEY_OK;
         } else if (event == BSP_BTN_LONG) {
-            queued.key = BADGE_KEY_BACK;
+            queued.key = BADGE_KEY_SUBMIT;
         } else {
             return;
         }

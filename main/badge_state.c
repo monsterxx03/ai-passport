@@ -201,9 +201,10 @@ static bool key_permission(badge_state_t *state, const badge_msg_t *ask, badge_k
         *out_length = badge_proto_answer_permission(out, cap, ask->ref,
                                                     ask->options[state->selection].value);
         return *out_length > 0U;
-    case BADGE_KEY_BACK:
+    case BADGE_KEY_SUBMIT:
     default:
         // 一条要放行的命令没有「忽略」这个选项：不回答它就一直是没回答。
+        // 换题与提交在这里也没有意义：待答项只有一条，选项就那三个。
         return false;
     }
 }
@@ -220,16 +221,25 @@ static bool key_questions(badge_state_t *state, const badge_msg_t *ask, badge_ke
     case BADGE_KEY_DOWN:
         move_selection(state, 1, item->option_count);
         return false;
-    case BADGE_KEY_BACK:
-        if (item->multi_select) {
-            return submit_questions(state, ask, out, cap, out_length);
-        }
-        // 单选时长按是「回到上一题」；第一题上它什么都不做。
+    case BADGE_KEY_PREV:
+        // 回到上一题。第一题上它什么都不做——没有「上一题」可比回到。
         if (state->question_index > 0U) {
             state->question_index -= 1U;
             state->selection = 0;
         }
         return false;
+    case BADGE_KEY_NEXT:
+        // 去下一题。多选题没有别的办法离开当前题：短按确定被「勾选」占着，
+        // 而长按确定是提交——所以换题必须由这两个键来承担（见 badge_state.h）。
+        if (state->question_index + 1U < ask->question_count) {
+            state->question_index += 1U;
+            state->selection = 0;
+        }
+        return false;
+    case BADGE_KEY_SUBMIT:
+        // 两种题型都是长按提交：单选在末题按确定就自动提交，这里只是给它一条
+        // 一样的手势；没答完的题会由 submit_questions 拒绝并给出提示。
+        return submit_questions(state, ask, out, cap, out_length);
     case BADGE_KEY_OK:
     default:
         break;

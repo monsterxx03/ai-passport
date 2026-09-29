@@ -352,25 +352,19 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
         }
     }
 
-    // 底栏：先报进度，再报按键。一次问多个问题时，屏幕上一次只显示一道，
-    // 不说「第几题／共几题」的话，答完第一题突然冒出第二题会像是界面错乱。
+    // 底栏：先报按键，再报其它。题号不在这里重复——标题已经写成「标题 (1/2)」，
+    // 而这块屏一行放不下「第几题 + 换题 + 提交」三件事。
     if (snapshot->notice != NULL) {
         lv_label_set_text(s_ak_footer, snapshot->notice);
     } else if (questions && ask->question_count > 1U) {
-        // 缓冲要放得下最长的那一版：「第 3/3 题 · 确定勾选 · 长按提交」是 20 多个
-        // 汉字，48 时编译器会报 format-truncation（那是对的——它确实可能被截断）。
-        char progress[96];
-
-        (void)snprintf(progress, sizeof(progress), "第 %u/%u 题 · %s",
-                       (unsigned)(snapshot->question_index + 1U),
-                       (unsigned)ask->question_count,
-                       (question != NULL && question->multi_select) ? "确定勾选 · 长按提交"
-                                                                   : "确定下一题");
-        lv_label_set_text(s_ak_footer, progress);
+        lv_label_set_text(s_ak_footer,
+                          (question != NULL && question->multi_select)
+                              ? "上/下长按换题 · 确定长按提交"
+                              : "上/下长按换题 · 确定下一题");
     } else if (questions && question != NULL && question->multi_select) {
-        lv_label_set_text(s_ak_footer, "上下选择 · 确定勾选 · 长按提交");
+        lv_label_set_text(s_ak_footer, "确定勾选 · 长按提交");
     } else {
-        lv_label_set_text(s_ak_footer, "上下选择 · 确定提交 · 长按返回");
+        lv_label_set_text(s_ak_footer, "上下选择 · 确定提交");
     }
 }
 

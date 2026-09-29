@@ -21,8 +21,9 @@ wait: the screen says who is waiting and what for, and the buttons carry your de
 | Confirm | a command wants approval | read the preview, pick allow once / allow for this session / deny |
 | Question | the model asked something | a list of options, multi-select supported |
 
-Buttons: up/down to move, OK to submit. On a multi-select question OK toggles and a long press
-submits; on a single-select question a long press goes back one question.
+Buttons: a short up/down moves between options, OK submits. On a multi-select question OK toggles
+and a long press submits; when one ask holds several questions, a **long up/down switches
+questions** (a single-select question advances on its own once answered).
 
 ## How it talks to the computer
 

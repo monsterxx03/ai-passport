@@ -17,10 +17,12 @@
 #define BADGE_MAX_ASKS 4
 
 typedef enum {
-    BADGE_KEY_UP = 0,
+    BADGE_KEY_UP = 0, // 短按上/下：在选项间移动
     BADGE_KEY_DOWN,
-    BADGE_KEY_OK,   // 单按：选中/切换勾选
-    BADGE_KEY_BACK, // 长按确定：多选提交；单选的题也可用它回到上一题
+    BADGE_KEY_PREV,   // 长按上：上一题（第一题上无动作）
+    BADGE_KEY_NEXT,   // 长按下：下一题（最后一题上无动作）
+    BADGE_KEY_OK,     // 短按确定：单选=选中并前进；多选=勾选/取消勾选
+    BADGE_KEY_SUBMIT, // 长按确定：提交。换题走 PREV/NEXT，这样一套手势对两种题型都成立
 } badge_key_t;
 
 typedef struct {
