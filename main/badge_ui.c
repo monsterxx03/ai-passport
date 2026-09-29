@@ -41,7 +41,7 @@ static lv_obj_t *s_st_battery;
 static lv_obj_t *s_st_transport;
 static lv_obj_t *s_st_dot;
 static lv_obj_t *s_st_state;
-static lv_obj_t *s_st_route;
+static lv_obj_t *s_st_title;
 static lv_obj_t *s_st_detail;
 static lv_obj_t *s_st_footer;
 
@@ -138,20 +138,23 @@ static void build_status_screen(void)
 {
     s_status_scr = make_screen();
 
-    lv_obj_t *brand = make_label(s_status_scr, COL_MUTED);
-
-    lv_label_set_text(brand, "TACHI");
-    lv_obj_align(brand, LV_ALIGN_TOP_LEFT, 20, 16);
-
-    // 顶栏的传输指示：屏幕上写的和实际走的必须是同一条判据（见 main.c 的
-    // active_transport）。紧跟在品牌右边，不占别的地方——这一栏一共也只有 240px。
-    // 两枚图标走图标字体（USB / 蓝牙的 logo 没有 Unicode 码位，见 badge_ui.h）。
-    s_st_transport = make_label(s_status_scr, COL_MUTED);
-    lv_obj_set_style_text_font(s_st_transport, FONT_ICON, 0);
-    lv_obj_align_to(s_st_transport, brand, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+    // 顶栏就是标题栏：左边是**当前会话的名字**（没有会话时回退成品牌名，这一栏不空
+    // 着），右边是传输图标 + 电量。会话名放这里而不是主体里，是因为它属于「这是哪一
+    // 个窗口」这一层，而主体那两行要说的是「它此刻在干什么」。
+    s_st_title = make_label(s_status_scr, COL_MUTED);
+    // 宽度按右侧那一簇留出来：图标 ~14 + 间距 8 + 电量 ~34 + 右边距 20。
+    one_line(s_st_title, 140, false);
+    lv_obj_align(s_st_title, LV_ALIGN_TOP_LEFT, 20, 16);
 
     s_st_battery = make_label(s_status_scr, COL_MUTED);
     lv_obj_align(s_st_battery, LV_ALIGN_TOP_RIGHT, -20, 16);
+
+    // 传输指示贴在电量左边成一簇：屏幕上画的和实际走的必须是同一条判据（见 main.c 的
+    // active_transport）。跟着标题排版的话，标题一长就会把它顶出屏幕。两枚图标走图标
+    // 字体（USB / 蓝牙的 logo 没有 Unicode 码位，见 badge_ui.h）。
+    s_st_transport = make_label(s_status_scr, COL_MUTED);
+    lv_obj_set_style_text_font(s_st_transport, FONT_ICON, 0);
+    lv_obj_align_to(s_st_transport, s_st_battery, LV_ALIGN_OUT_LEFT_MID, -6, 0);
 
     // 头像占原来那个圆的位置。它不再靠颜色说话——一张脸比一个色块更像「有人在」；
     // 颜色改由下面那颗小圆点承担（见 render_status）。
@@ -170,13 +173,10 @@ static void build_status_screen(void)
     one_line(s_st_state, 200, true);
     lv_obj_align(s_st_state, LV_ALIGN_TOP_MID, 0, 194);
 
-    s_st_route = make_label(s_status_scr, COL_MUTED);
-    one_line(s_st_route, 200, true);
-    lv_obj_align(s_st_route, LV_ALIGN_TOP_MID, 0, 224);
-
+    // 会话名搬去顶栏之后，主体这里是「状态 + 它此刻在干什么」两行，挨着排。
     s_st_detail = make_label(s_status_scr, COL_MUTED);
     one_line(s_st_detail, 200, true);
-    lv_obj_align(s_st_detail, LV_ALIGN_TOP_MID, 0, 248);
+    lv_obj_align(s_st_detail, LV_ALIGN_TOP_MID, 0, 224);
 
     s_st_footer = make_label(s_status_scr, COL_MUTED);
     one_line(s_st_footer, 220, true);
@@ -365,6 +365,10 @@ static void render_pair(const badge_ui_snapshot_t *snapshot)
 static void render_status(const badge_ui_snapshot_t *snapshot)
 {
     set_battery(s_st_battery, snapshot);
+    // 写完电量再对一次位：`lv_obj_align_to` 算的是**一次性**的位置，而电量那行在 build
+    // 时还是空文本——等它写上「82%」，盒子会往左长出来，图标和它之间的那条缝就跟着变成
+    // 一个洞（而且位数变化时洞的宽度还会变）。
+    lv_obj_align_to(s_st_transport, s_st_battery, LV_ALIGN_OUT_LEFT_MID, -6, 0);
     // 出方向走哪条链路是**路由事实**，不是「连没连上」：蓝牙没到「已认证加密」时
     // 每一行都从串口出去，屏幕上就该这么画。字形来自图标字体（LV_SYMBOL_* 与
     // tools/gen_badge_font.sh 里那两个码位是一对）。
@@ -372,17 +376,20 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
                       snapshot->transport == BADGE_UI_TRANSPORT_BLE ? LV_SYMBOL_BLUETOOTH
                                                                      : LV_SYMBOL_USB);
 
-    // 这两行都能滚，但只有真放不下时才动（LVGL 自己比宽度）。会话标题是主机下发的、
-    // 长度不归我们管；状态说明虽然是自己写的，也留出滚动的余地。息屏时必须停——
-    // 黑屏背后的动画纯粹在烧电，还会让 LVGL 任务一直重绘。
-    marquee(s_st_route, snapshot->screen_on);
+    // 标题栏那行最可能放不下（会话名是主机下发的，长度不归我们管），所以它自己跑马灯；
+    // 状态说明虽然是自己写的，也留出滚动的余地。息屏时必须停——黑屏背后的动画纯粹在
+    // 烧电，还会让 LVGL 任务一直重绘。
+    lv_label_set_text(s_st_title,
+                      snapshot->has_session && snapshot->session_title[0] != '\0'
+                          ? snapshot->session_title
+                          : "TACHI");
+    marquee(s_st_title, snapshot->screen_on);
     marquee(s_st_detail, snapshot->screen_on);
 
     if (!snapshot->connected) {
         // 链路断了：屏幕上必须说清楚，否则「空闲」会被读成「agent 没在干活」。
         lv_label_set_text(s_st_state, "等电脑");
         lv_obj_set_style_bg_color(s_st_dot, lv_color_hex(COL_MUTED), 0);
-        lv_label_set_text(s_st_route, "");
         // 「等电脑」底下藏着四种处境，用户要做的动作完全不同——糊成一句「还没有
         // 连上 tachi」等于什么都没说，而这块屏幕存在的意义就是回答「现在需要你
         // 做什么」。
@@ -413,11 +420,9 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
 
     if (!snapshot->has_session) {
         lv_label_set_text(s_st_state, "空闲");
-        lv_label_set_text(s_st_route, "");
         lv_label_set_text(s_st_detail, "电脑上没有会话在跑");
     } else {
         lv_label_set_text(s_st_state, snapshot->state_label);
-        lv_label_set_text(s_st_route, snapshot->session_title);
         lv_label_set_text(s_st_detail, snapshot->state_detail);
     }
 

@@ -17,7 +17,7 @@ wait: the screen says who is waiting and what for, and the buttons carry your de
 
 | Screen | When | What you can do |
 | --- | --- | --- |
-| Status | the usual case | see who is running, how far along, whether the computer is connected, battery — the top bar also says which link is in use (BLE or USB) |
+| Status | the usual case | the top bar names the current session (TACHI when none), plus the link icon and battery; the body shows how far along it is and what the running tool is doing |
 | Confirm | a command wants approval | read the preview, pick allow once / allow for this session / deny |
 | Question | the model asked something | a list of options, multi-select supported |
 | Pairing | the first time over Bluetooth | the 6-digit code on the screen, to be typed on the computer |
