@@ -1,12 +1,15 @@
-// No LVGL task may see the display until the rounding callback is registered.
+// Display registration is the success criterion: a failed bring-up must leave
+// no live display behind, and a live display must never be torn down or
+// re-registered. No rounding mask callback is registered for now (see
+// bsp_display_lvgl.c), so there is no event-registration scenario here.
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
 #include "../components/bsp/src/bsp_display_lvgl.c"
 
 static lv_display_t display;
-static int panel_present = 1, lock_depth, port_live, display_live, callback_live;
-static int fail_lock, fail_port, fail_display, fail_event, init_calls, unlocked_flushes;
+static int panel_present = 1, lock_depth, port_live, display_live;
+static int fail_lock, fail_port, fail_display, init_calls;
 static int panel_token, io_token;
 esp_lcd_panel_handle_t bsp_display_panel(void) { return panel_present ? &panel_token : NULL; }
 esp_lcd_panel_io_handle_t bsp_display_io(void) { return &io_token; }
@@ -28,10 +31,6 @@ bool lvgl_port_lock(uint32_t timeout) {
 void lvgl_port_unlock(void) {
     assert(lock_depth > 0);
     --lock_depth;
-    if (!lock_depth && display_live) {
-        assert(callback_live); // Simulate rendering as soon as the lock is free.
-        ++unlocked_flushes;
-    }
 }
 lv_display_t *lvgl_port_add_disp(const lvgl_port_display_cfg_t *cfg) {
     assert(lock_depth > 0 && cfg->panel_handle == &panel_token && !display_live);
@@ -40,19 +39,8 @@ lv_display_t *lvgl_port_add_disp(const lvgl_port_display_cfg_t *cfg) {
     lvgl_port_unlock();
     return fail_display ? NULL : &display;
 }
-esp_err_t lvgl_port_remove_disp(lv_display_t *disp) {
-    assert(disp == &display && lock_depth && display_live);
-    display_live = callback_live = 0; return ESP_OK;
-}
-void lv_display_add_event_cb(lv_display_t *disp, void (*cb)(lv_event_t *), int code, void *user) {
-    (void)user;
-    assert(lock_depth && disp == &display && code == LV_EVENT_FLUSH_START && cb == rounded_flush_event);
-    if (!fail_event) callback_live = 1;
-}
-uint32_t lv_display_get_event_count(lv_display_t *disp) {
-    assert(disp == &display && lock_depth);
-    return 1 + callback_live; // The display already owns an internal callback.
-}
+// No lvgl_port_remove_disp / lv_display_add_event_cb stubs: without the rounding
+// mask callback there is no rollback path and no event registration to model.
 static void expect_failure(void) {
     assert(bsp_lvgl_init() == NULL);
     assert(!s_disp && !lock_depth && !display_live);
@@ -68,10 +56,9 @@ int main(void) {
     fail_lock = 1; expect_failure(); fail_lock = 0;
     const int retained_init_calls = init_calls;
     fail_display = 1; expect_failure(); fail_display = 0;
-    fail_event = 1; expect_failure(); fail_event = 0;
     assert(bsp_lvgl_init() == &display);
     assert(init_calls == retained_init_calls); // Display retries reuse the port.
-    assert(callback_live && !lock_depth && unlocked_flushes == 1);
+    assert(!lock_depth); // Init returns with the port mutex free.
     const int before = init_calls;
     assert(bsp_lvgl_init() == &display && init_calls == before);
     assert(bsp_lvgl_lock(5)); bsp_lvgl_unlock();

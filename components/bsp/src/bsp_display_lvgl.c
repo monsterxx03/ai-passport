@@ -90,8 +90,8 @@ lv_display_t *bsp_lvgl_init(void) {
         // swap_bytes:LVGL 输出小端 RGB565,ST7789 走 SPI 要大端 → 需交换高低字节。
         .flags = { .buff_dma = true, .swap_bytes = true },
     };
-    // The port mutex is recursive. Keep registration and the mask callback in
-    // one critical section, before the new display can produce its first flush.
+    // The port mutex is recursive. Register the display while holding it, so no
+    // other LVGL task can observe a half-registered display.
     if (!lvgl_port_lock(0)) {
         ESP_LOGE(TAG, "LVGL 初始化加锁失败");
         return NULL;
