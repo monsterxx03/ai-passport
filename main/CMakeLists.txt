@@ -8,6 +8,7 @@ idf_component_register(
          "badge_proto.c"
          "badge_link.c"
          "badge_state.c"
+         "badge_power.c"
          "badge_ui.c"
          "badge_font_16.c"
          "badge_avatar.c"

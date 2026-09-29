@@ -25,6 +25,13 @@ Buttons: a short up/down moves between options, OK submits. On a multi-select qu
 and a long press submits; when one ask holds several questions, a **long up/down switches
 questions** (a single-select question advances on its own once answered).
 
+The screen also goes quiet on its own: with nothing pending and nobody pressing anything, the
+backlight turns off after 60 seconds. What saves power is the backlight, not sleeping the chip —
+a sleeping chip cannot hear the ask the host is trying to deliver. **The screen never blanks while
+an ask is pending**; after it blanks, any button lights it immediately, and that press only lights
+it (on a dark screen you cannot see where the cursor is, so it must not submit anything). A new ask,
+or the link dropping, lights it too.
+
 ## How it talks to the computer
 
 One USB serial line (the ESP32-C3's USB-Serial-JTAG), line-delimited JSON, every line prefixed
@@ -86,6 +93,7 @@ main/badge_proto.c    the protocol: parse and encode one line of JSON (pure logi
 main/badge_json.c     the minimal JSON reader/writer used by it (no deps, no allocation)
 main/badge_link.c     the serial line: framing, only lines carrying @@ count
 main/badge_state.c    the state machine: what arrives, what a key press sends (pure, host-testable)
+main/badge_power.c    screen on/off: how long idle blanks it, what lights it (pure, host-testable)
 main/badge_ui.c       the three screens (its own UI, not the baseline demo menu shell)
 main/main.c           entry: init, event loop, heartbeat and timeout
 tests/test_badge_*.c  unit tests for the pure parts (`./tools/validate.sh --static` runs them)

@@ -44,6 +44,10 @@ run_static_checks() {
         tests/test_badge_state.c main/badge_state.c main/badge_proto.c main/badge_json.c \
         -o "${test_dir}/test_badge_state"
     "${test_dir}/test_badge_state"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Imain \
+        tests/test_badge_power.c main/badge_power.c \
+        -o "${test_dir}/test_badge_power"
+    "${test_dir}/test_badge_power"
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Icomponents/bsp/src \
         tests/test_bsp_display_rounding.c components/bsp/src/bsp_display_rounding.c \
         -o "${test_dir}/test_bsp_display_rounding"

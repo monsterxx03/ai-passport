@@ -25,6 +25,7 @@
 #include "nvs_flash.h"
 
 #include "badge_link.h"
+#include "badge_power.h"
 #include "badge_proto.h"
 #include "badge_state.h"
 #include "badge_ui.h"
@@ -60,6 +61,10 @@ static const char *TAG = "badge";
 #define BADGE_HEARTBEAT_MS 10000U
 #define BADGE_LINK_TIMEOUT_MS 30000U
 
+// 正常亮度。空闲熄屏就是把它降到 0（见 badge_power）——省电靠的是背光，不是让
+// 芯片睡下去：睡下去就听不到主机递过来的 ask，而那是这块设备唯一的存在理由。
+#define BADGE_BACKLIGHT_LEVEL 80U
+
 typedef struct {
     char text[BADGE_LINE_MAX];
     size_t length;
@@ -81,6 +86,18 @@ static badge_ui_snapshot_t s_snapshot;
 
 static int s_battery_percent = -1;
 static uint32_t s_last_message_ms;
+
+// 屏幕亮灭（只动背光）。判据是纯逻辑，在 badge_power 里，主机测试覆盖它。
+static badge_power_t s_power;
+
+// set_backlight 是**唯一**写背光的地方：屏幕状态变了才写一次，
+// 而不是每个 tick 都写一遍 LEDC。
+static void apply_backlight(void)
+{
+    bsp_display_backlight(s_power.screen_on ? BADGE_BACKLIGHT_LEVEL : 0U);
+    ESP_LOGI(TAG, "屏幕%s（待答 %u 条）", s_power.screen_on ? "亮" : "灭",
+             (unsigned)s_state.ask_count);
+}
 
 static uint32_t now_ms(void)
 {
@@ -282,14 +299,30 @@ static void badge_task(void *argument)
         static badge_line_t line;
         badge_key_event_t key;
         bool dirty = false;
+        bool touched = false;
         uint32_t now = now_ms();
 
         if (xQueueReceive(s_line_queue, &line, 0) == pdTRUE) {
+            const bool was_connected = s_state.connected;
+
             dirty = handle_line(&line) || dirty;
+            // 只有「连上了 / 断了」算活动，消息本身不算：主机每 10 秒会回一条
+            // 心跳式的 state，把它当活动的话空闲计时永远归零，屏幕根本不会灭。
+            // 新的待答项不必在这里点亮——它由下面 badge_power_tick 的
+            // has_pending_ask 负责，那也是同一个 tick 里更准确的判断。
+            if (s_state.connected != was_connected) {
+                touched = true;
+            }
         }
         while (xQueueReceive(s_key_queue, &key, 0) == pdTRUE) {
-            handle_key(&key);
-            dirty = true;
+            // 灭屏时的这一次按键只负责点亮，不进状态机：黑屏上你看不见光标停在
+            // 哪一项、也看不见勾选状态，而三键里「确定」按下去就是一个决定
+            // （可能是在批准一条要执行的命令）。
+            if (s_power.screen_on) {
+                handle_key(&key);
+                dirty = true;
+            }
+            touched = true;
         }
 
         if (now - last_battery_ms >= BADGE_BATTERY_SAMPLE_MS) {
@@ -314,11 +347,27 @@ static void badge_task(void *argument)
             // 会被读成「agent 没在干活」。
             badge_state_set_connected(&s_state, false);
             dirty = true;
+            touched = true; // 「等电脑」也是一件需要被看见的事，先点亮再说
         }
         // 推进状态机自己的时钟：一次性提示（「已发送」）靠它过期。传 0 会让提示
         // 永远挂在那里——那是这个 tick 存在的唯一理由。
         if (badge_state_tick(&s_state, BADGE_APP_TICK_MS)) {
             dirty = true;
+        }
+        // 屏幕亮灭。touched 只在真有事件时置位（按键、链路状态变化），所以空闲计时
+        // 不会被每 100ms 一次的 tick 自己清零；待答项则交给下面的 has_pending_ask。
+        {
+            bool flip = false;
+
+            if (touched) {
+                flip = badge_power_activity(&s_power, now);
+            }
+            if (badge_power_tick(&s_power, now, s_state.ask_count > 0U)) {
+                flip = true;
+            }
+            if (flip) {
+                apply_backlight();
+            }
         }
         if (dirty) {
             render();
@@ -344,11 +393,13 @@ void app_main(void)
         ESP_LOGE(TAG, "display/LVGL initialization failed");
         return;
     }
-    bsp_display_backlight(80);
-    (void)bsp_battery_init();
-
     badge_state_init(&s_state);
     badge_state_set_connected(&s_state, false);
+
+    // 屏幕从亮开始；apply_backlight 是唯一写背光的地方。
+    badge_power_init(&s_power, now_ms());
+    apply_backlight();
+    (void)bsp_battery_init();
 
     s_line_queue = xQueueCreate(BADGE_LINE_QUEUE_DEPTH, sizeof(badge_line_t));
     s_key_queue = xQueueCreate(BADGE_KEY_QUEUE_DEPTH, sizeof(badge_key_event_t));
