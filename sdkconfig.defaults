@@ -66,3 +66,9 @@ CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=n
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_MAX_BONDS=1
 CONFIG_BT_NIMBLE_HANDLE_REPEAT_PAIRING_DELETION=y
+# MSYS 的块要装得下**一个 ATT 包**：NimBLE 的内部上限是 BLE_ATT_ATTR_MAX_LEN=512，
+# 而默认 256 的块（去掉 mbuf 头只剩 ~220）装不下一条 253 字节的 notify —— 每条都要跨
+# 两块，池的消耗翻倍，连发几片就再也拿不到缓冲（实测：第 4 片起整片失败，主机只看到
+# 3 KB，日志是「池里拿不到 mbuf，剩 24」）。640 让一条 253 字节的消息单块装下。
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_SIZE=640
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=12

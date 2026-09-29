@@ -190,6 +190,21 @@ static void feed(const char *data, size_t length)
 
 // --- 出方向 ------------------------------------------------------------------
 
+// 一块 notify 拿不到缓冲时重试几次、每次等多久。
+//
+// 为什么要重试：一条 notify 交出去之后，缓冲要等**链路层真的把它发出去**才回收，而那
+// 是下一个连接事件的事（实测 macOS 上这条链路 ~40–50 ms 一个事件：设备侧 1.9 秒提交
+// 了 35 片，正好一片一个事件）。提交速率必然超过回收速率，池会见底——实测默认池下第
+// 4 片起就再也拿不到缓冲。等一小会儿再试，让在飞的先出去。
+//
+// ⚠ 1 ms 不够：池的回收周期是连接事件，不是 CPU 调度。20×1 ms 的等待换来的是「试了
+// 20 次仍然失败」，而 20×10 ms 才跨得过一个事件。
+//
+// ⚠ 也不要拿 BLE_GAP_EVENT_NOTIFY_TX 当这个信号：它在 ble_gatts_notify_custom **内部**
+// 同步触发，语义是「提交过了」，不是「发出去了」（见 NimBLE 的 ble_gattc.c）。
+#define BADGE_BLE_TX_ATTEMPTS 20
+#define BADGE_BLE_TX_RETRY_MS 10U
+
 // notify_chunks 把一段字节按协商到的 MTU 逐个 notify 出去。
 static bool notify_chunks(const char *data, size_t length)
 {
@@ -201,10 +216,39 @@ static bool notify_chunks(const char *data, size_t length)
         if (chunk > s_chunk) {
             chunk = s_chunk;
         }
-        struct os_mbuf *om = ble_hs_mbuf_from_flat(data + sent, (uint16_t)chunk);
+        // 两个地方都会「暂时没地方放」：本地 mbuf 池（ble_hs_mbuf_from_flat 返回 NULL）
+        // 和控制器/HCI 的 ACL 缓冲（notify_custom 返回 BLE_HS_ENOMEM）。两者都要靠等——它们
+        // 都在链路层把前面的包发出去之后才腾出来（实测：等够之后池的报错完全消失，
+        // 只剩 rc=6 这一种）。
+        //
+        // 重试同一块是安全的：失败的那一块没有发出去，而它前面的块已经发完了，
+        // 所以不会留下「半行」（半行才是要避免的，见 badge_ble.h）。
+        int rc = BLE_HS_ENOMEM;
+        int attempt;
 
-        if (om == NULL || ble_gatts_notify_custom(s_conn_handle, s_tx_handle, om) != 0) {
-            ESP_LOGW(TAG, "notify 失败（已发 %u/%u 字节）", (unsigned)sent, (unsigned)length);
+        for (attempt = 0; attempt < BADGE_BLE_TX_ATTEMPTS; ++attempt) {
+            struct os_mbuf *om = ble_hs_mbuf_from_flat(data + sent, (uint16_t)chunk);
+
+            if (om == NULL) {
+                vTaskDelay(pdMS_TO_TICKS(BADGE_BLE_TX_RETRY_MS));
+                continue;
+            }
+            rc = ble_gatts_notify_custom(s_conn_handle, s_tx_handle, om);
+            if (rc == 0) {
+                break;
+            }
+            if (rc != BLE_HS_ENOMEM) {
+                // 别的错误（没连接、没订阅、缺 GATT 缓存……）重试也没用。
+                ESP_LOGW(TAG, "notify 被拒 rc=%d（已发 %u/%u 字节，剩 %d）",
+                         rc, (unsigned)sent, (unsigned)length, os_msys_num_free());
+                return false;
+            }
+            // notify_custom 失败时它自己已经释放了那块 mbuf（见 NimBLE 的 ble_gattc.c）。
+            vTaskDelay(pdMS_TO_TICKS(BADGE_BLE_TX_RETRY_MS));
+        }
+        if (attempt >= BADGE_BLE_TX_ATTEMPTS) {
+            ESP_LOGW(TAG, "notify 一直没位置（rc=%d，已发 %u/%u 字节，剩 %d，试了 %d 次）",
+                     rc, (unsigned)sent, (unsigned)length, os_msys_num_free(), attempt);
             return false;
         }
         sent += chunk;
