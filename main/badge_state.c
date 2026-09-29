@@ -34,6 +34,10 @@ void badge_state_notice(badge_state_t *state, const char *text, uint32_t duratio
     set_notice(state, text, duration_ms);
 }
 
+// 信息屏停留多久。它是一眼的信息，不是要停在那里的状态——8 秒够看完三行，久了就变成
+// 挡在主屏前面的东西。
+#define BADGE_INFO_MS 8000U
+
 bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
 {
     state->now += elapsed_ms;
@@ -41,7 +45,27 @@ bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
         state->notice[0] = '\0';
         return true;
     }
+    if (state->info_open && state->now >= state->info_deadline) {
+        state->info_open = false;
+        return true;
+    }
     return false;
+}
+
+void badge_state_info_open(badge_state_t *state)
+{
+    state->info_open = true;
+    state->info_deadline = state->now + BADGE_INFO_MS;
+}
+
+void badge_state_info_close(badge_state_t *state)
+{
+    state->info_open = false;
+}
+
+bool badge_state_info_visible(const badge_state_t *state)
+{
+    return state->info_open;
 }
 
 void badge_state_set_connected(badge_state_t *state, bool connected)
@@ -177,6 +201,12 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
         set_notice(state, line, 8000U);
         return true;
     }
+    case BADGE_MSG_INFO:
+        // 那一屏的几行字到了。**顺便把它打开**：设备双击之后先开屏、再等回执，所以
+        // 「数据到了」和「该显示它了」是同一件事——设备侧不必自己记住它在等什么。
+        state->info = message->info;
+        badge_state_info_open(state);
+        return true;
     case BADGE_MSG_ALERT:
         // 主机说「响一声」：它知道自己在不在前台、用户正在看哪个会话，而这块屏上
         // 一条信息都没有。这里只记下是哪一种，放音频是调用方的事（见 badge_sound）。
@@ -396,5 +426,14 @@ void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot
         snapshot->question_index = state->question_index;
         snapshot->checked = state->picked[state->question_index];
     }
-    snapshot->view = state->ask_count > 0U ? BADGE_UI_ASK : BADGE_UI_STATUS;
+    // 优先级：待答屏 > 信息屏 > 状态屏。有人在等永远比「看一眼账」要紧，而账什么时候
+    // 看都行——所以信息屏被一条 ask 顶掉是应该的。
+    if (state->ask_count > 0U) {
+        snapshot->view = BADGE_UI_ASK;
+    } else if (state->info_open) {
+        snapshot->view = BADGE_UI_INFO;
+        snapshot->info = &state->info;
+    } else {
+        snapshot->view = BADGE_UI_STATUS;
+    }
 }

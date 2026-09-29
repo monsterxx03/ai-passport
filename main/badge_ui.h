@@ -29,6 +29,8 @@ extern const lv_font_t badge_font_icon_16;
 typedef enum {
     BADGE_UI_STATUS = 0, // 平时：谁在跑、跑到哪一步
     BADGE_UI_ASK,        // 有事等你：权限确认，或模型提的问题
+    BADGE_UI_INFO,       // 双击确定看的那一眼：模型、上下文、花费
+    BADGE_UI_VIEW_COUNT, // 计数用（不是一屏）
 } badge_ui_view_t;
 
 // 链路的四种状态。刻意不 include badge_ble.h：那个头带着 esp_err.h（ESP-IDF 专有），
@@ -76,6 +78,10 @@ typedef struct {
 
     // 一次性提示：回答已发出、主机拒绝了回答、这个问题要在电脑上答。
     const char *notice;
+
+    // 会话信息屏那几行（非空 = 显示那一屏）。是**指针**：数据和字符串都活在状态机里，
+    // 界面只读它——复制一份只会多一个会失同步的地方。
+    const badge_info_t *info;
 
     // 录音中：已录多久、上限多少（毫秒）。recording 为 false 时这两个数没有意义。
     //

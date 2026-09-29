@@ -385,6 +385,36 @@ static void test_voice_text(void)
     assert(strlen(message.voice_text) < BADGE_VOICE_TEXT_MAX);
 }
 
+// 会话信息屏那几行：全是主机排好版的字符串，设备只负责画。空串表示「这一项没有」，
+// 所以解析不能把空字段当成坏数据。
+static void test_info(void)
+{
+    assert(parse("{\"t\":\"info\",\"seq\":42,\"title\":\"修 lint\",\"model\":\"gpt-5\","
+                 "\"context\":\"12.3k / 32k (39%)\",\"cost\":\"$0.42\"}"));
+    assert(message.kind == BADGE_MSG_INFO);
+    assert(strcmp(message.info.title, "修 lint") == 0);
+    assert(strcmp(message.info.model, "gpt-5") == 0);
+    assert(strcmp(message.info.context, "12.3k / 32k (39%)") == 0);
+    assert(strcmp(message.info.cost, "$0.42") == 0);
+
+    // 没有活跃会话时主机只给一个 title，其余为空——那几行不画，而不是拿上一屏的残渣。
+    assert(parse("{\"t\":\"info\",\"title\":\"（没有活跃会话）\"}"));
+    assert(strcmp(message.info.title, "（没有活跃会话）") == 0);
+    assert(message.info.model[0] == '\0');
+    assert(message.info.cost[0] == '\0');
+}
+
+// 设备问的那一条：一小行，没有参数。
+static void test_info_request(void)
+{
+    char line[64];
+
+    assert(badge_proto_info_request(line, sizeof(line)) == strlen("{\"t\":\"info\"}"));
+    assert(strcmp(line, "{\"t\":\"info\"}") == 0);
+    // 装不下就整条作废（不留半条）。
+    assert(badge_proto_info_request(line, 4U) == 0U);
+}
+
 static void test_alert_message(void)
 {
     assert(parse("{\"t\":\"alert\",\"seq\":9,\"kind\":\"ask\"}"));
@@ -420,6 +450,8 @@ int main(void)
     test_question_answer_round_trip();
     test_encoding_refuses_a_partial_message();
     test_voice_text();
+    test_info();
+    test_info_request();
     test_alert_message();
     printf("test_badge_proto: OK\n");
     return 0;

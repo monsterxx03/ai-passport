@@ -178,6 +178,10 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
             queued.key = BADGE_KEY_OK;
         } else if (event == BSP_BTN_LONG) {
             queued.key = BADGE_KEY_SUBMIT;
+        } else if (event == BSP_BTN_DOUBLE) {
+            // 双击确定：看一眼当前会话的账（模型、上下文、花费）。双击在三个键上本来都
+            // 空着，而这一件事值得一个手势——它是你在设备旁边最想知道的那个数。
+            queued.key = BADGE_KEY_INFO;
         } else {
             return;
         }
@@ -392,6 +396,27 @@ static void handle_key(const badge_key_event_t *event)
     // 静态而不是栈上：最坏情况接近 2KB，而任务栈只有 8192（见 BADGE_ANSWER_MAX）。
     static char payload[BADGE_ANSWER_MAX];
     size_t length = 0;
+
+    // 信息屏是一眼的东西：任何一次按键都把它收起来（再看就再双击一次）。这排在别的路由
+    // 之前——否则「看一眼账」的那一屏上按确定会去录音，而那显然不是人的意思。
+    if (badge_state_info_visible(&s_state)) {
+        badge_state_info_close(&s_state);
+        return;
+    }
+
+    // 主屏双击确定 = 问一次「这个会话的账」：先开屏（先显示一句「读取中…」），数据由
+    // 主机回的那条 info 填上。它只在主屏有意义——上面的信息屏与下面的待答屏都各有各的
+    // 按键含义，不该被这个手势插进来。
+    if (event->key == BADGE_KEY_INFO && s_state.ask_count == 0U) {
+        char request[32];
+        const size_t length = badge_proto_info_request(request, sizeof(request));
+
+        if (length > 0U) {
+            (void)send_line(request, length);
+        }
+        badge_state_info_open(&s_state);
+        return;
+    }
 
     // 录音中短按确定 = 丢弃这一段（手滑了不用发上去）。它排在最前面：录音时屏幕上显示
     // 的是倒计时，那一刻「确定」只该有这一个含义，别的路由都该让路。

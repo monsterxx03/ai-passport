@@ -23,6 +23,7 @@ typedef enum {
     BADGE_KEY_NEXT,   // 长按下：下一题（最后一题上无动作）
     BADGE_KEY_OK,     // 短按确定：单选=选中并前进；多选=勾选/取消勾选
     BADGE_KEY_SUBMIT, // 长按确定：提交。换题走 PREV/NEXT，这样一套手势对两种题型都成立
+    BADGE_KEY_INFO,   // 双击确定：看一眼当前会话的账（模型、上下文、花费）
 } badge_key_t;
 
 typedef struct {
@@ -55,6 +56,12 @@ typedef struct {
     // 直接放声音，是因为「什么时候该响、响哪一种」是**状态**（主机发来的 alert 消息），
     // 而状态机是纯逻辑、能在主机上测。
     badge_alert_kind_t alert_pending;
+
+    // 会话信息屏那几行。它是一眼的东西，不是要停在那里的状态：所以有截止时间，到点自己
+    // 回主屏（见 badge_state_tick）。数据由主机填（双击之后回一条 info）。
+    badge_info_t info;
+    bool info_open;
+    uint32_t info_deadline;
 } badge_state_t;
 
 void badge_state_init(badge_state_t *state);
@@ -70,6 +77,16 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message);
 // badge_state_notice 显示一行一次性提示（比如「已发送」）。它自己会过期——
 // 按下一个键之后界面上必须有动静，否则用户只能靠猜。
 void badge_state_notice(badge_state_t *state, const char *text, uint32_t duration_ms);
+
+// badge_state_info_open 打开会话信息屏（双击确定时调）。此刻数据可能还没到——那一屏
+// 会先显示一句「读取中…」，回执到了再填上（见 badge_state_apply 的 BADGE_MSG_INFO）。
+void badge_state_info_open(badge_state_t *state);
+
+// badge_state_info_close 收起它。任何一次按键都该调它：那是一眼的东西，看完就走。
+void badge_state_info_close(badge_state_t *state);
+
+// badge_state_info_visible 它此刻开着吗（按键路径据此决定「这一下是收起它还是干别的」）。
+bool badge_state_info_visible(const badge_state_t *state);
 
 // badge_state_key 处理一次按键。
 //

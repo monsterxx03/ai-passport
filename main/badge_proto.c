@@ -264,6 +264,16 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
         }
         return false;
     }
+    if (strcmp(kind, "info") == 0) {
+        // 「看一眼这个会话的账」的答案。设备只是显示它——这几行里的每个字都已经由主机
+        // 排好版了（见 badge_proto.h 里 badge_info_t 的注释）。
+        out->kind = BADGE_MSG_INFO;
+        (void)take_string(&root, "title", out->info.title, sizeof(out->info.title));
+        (void)take_string(&root, "model", out->info.model, sizeof(out->info.model));
+        (void)take_string(&root, "context", out->info.context, sizeof(out->info.context));
+        (void)take_string(&root, "cost", out->info.cost, sizeof(out->info.cost));
+        return true;
+    }
     if (strcmp(kind, "voice_text") == 0) {
         // 刚才那段语音转成了什么，以及它到哪了。设备只是**显示**它——和这条链路上别的
         // 消息一样，这里不理解"那句话说了什么"。
@@ -380,6 +390,15 @@ size_t badge_proto_sync(char *out, size_t cap, unsigned long since)
     writer_literal(&w, "{\"t\":\"sync\",\"since\":");
     writer_ulong(&w, since);
     writer_literal(&w, "}");
+    return writer_finish(&w);
+}
+
+size_t badge_proto_info_request(char *out, size_t cap)
+{
+    writer_t w;
+
+    writer_init(&w, out, cap);
+    writer_literal(&w, "{\"t\":\"info\"}");
     return writer_finish(&w);
 }
 

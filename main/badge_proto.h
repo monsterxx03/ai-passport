@@ -63,7 +63,18 @@ typedef enum {
     BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
     BADGE_MSG_ALERT,    // 响一声：有事等你，或者一个回合跑完了
     BADGE_MSG_VOICE_TEXT, // 刚才那段语音转成了什么，以及它到哪了
+    BADGE_MSG_INFO,       // 「看一眼这个会话的账」的答案
 } badge_msg_kind_t;
+
+// 会话信息屏那几行。字段全是**主机格式化好的字符串**（"12.3k / 32k (39%)"、"$0.42"）：
+// 排版是语义，而语义留在主机——设备只负责把它们画出来，不必知道 k 是什么、货币怎么写、
+// 窗口未知时该不该显示百分比。空字符串表示「这一项没有」，那一行不画。
+typedef struct {
+    char title[BADGE_TITLE_MAX];  // 谁的账。**不能省**：设备屏幕上可能正显示着另一个会话
+    char model[BADGE_META_MAX];   // 在用什么模型
+    char context[BADGE_META_MAX]; // 上下文占用（窗口未知时只有 tokens）
+    char cost[BADGE_META_MAX];    // 花了多少
+} badge_info_t;
 
 // 语音回执里那两种结局：已经发给会话了，还是在队列里等一个 steer 点。这是「你那句话
 // 到哪了」的全部答案（tachi 那份设计文档 §5），设备据此决定说「已发送」还是「排队中」。
@@ -146,6 +157,9 @@ typedef struct {
     // BADGE_MSG_ALERT：放哪一段音频（BADGE_ALERT_NONE 表示这条消息不认识，忽略）
     badge_alert_kind_t alert_kind;
 
+    // BADGE_MSG_INFO：那一屏的几行字，原样显示。
+    badge_info_t info;
+
     // BADGE_MSG_VOICE_TEXT：转写出来的那一句，以及它到哪了。
     //
     // 这里**没有**存协议里的 id：一次只录一段，回执必然是给最近那次录音的（设备侧没有
@@ -172,6 +186,10 @@ size_t badge_proto_answer_permission(char *out, size_t cap, unsigned long ref,
 // badge_proto_answer_questions 组装提问的回答。keys 是**问题全文**（必须与收到的
 // 一字不差，所以调用方直接用 badge_question_t.question），values 是选中的标签，
 // 多选时由调用方先用 ", " 拼好——这与 TUI / desktop 的约定一致，模型看到的是同一个形状。
+// badge_proto_info_request 问一次「当前会话的账」（双击确定时发）。它是一次一问一答：
+// 主机回一条 info，没有 info 就没什么可显示的。
+size_t badge_proto_info_request(char *out, size_t cap);
+
 size_t badge_proto_answer_questions(char *out, size_t cap, unsigned long ref,
                                     const char *const *keys, const char *const *values,
                                     size_t count);
