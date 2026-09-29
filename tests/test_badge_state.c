@@ -664,6 +664,28 @@ static void test_idle_hint_rotates(void)
     assert(badge_state_hint_phase(&state) == 0U);
 }
 
+// 提示要能被**立刻**撤掉，不能只靠过期：按住说话那条路上，按下时写的「录音中…」在
+// 「松手太短、整段作废」时没有人来接替它（见 main.c 的 handle_voice_key）。
+static void test_notice_can_be_cleared(void)
+{
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    // 用一个很长的期限（按住说话那句就是 30 秒）：这条钉的是「撤掉」，不是「过期」。
+    badge_state_notice(&state, "录音中…松手发送", 30000U);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice != NULL);
+
+    badge_state_clear_notice(&state);
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice == NULL);
+
+    // 撤掉之后再推进时钟也不该冒出「变了」——那会白重画一帧。
+    assert(!badge_state_tick(&state, 1000U));
+    // 本来就没有提示时，撤一下也不是错。
+    badge_state_clear_notice(&state);
+}
+
 int main(void)
 {
     test_state_message_moves_the_view();
@@ -687,6 +709,7 @@ int main(void)
     test_ui_prefers_the_session_that_is_waiting();
     test_alert_kinds_reach_the_state();
     test_idle_hint_rotates();
+    test_notice_can_be_cleared();
     printf("test_badge_state: OK\n");
     return 0;
 }

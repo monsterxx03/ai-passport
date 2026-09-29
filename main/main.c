@@ -377,9 +377,14 @@ static void handle_voice_key(bool pressed)
         badge_state_notice(&s_state, "音频起不来", 4000U);
         break;
     case BADGE_VOICE_ACTION_TOO_SHORT:
+        // 太短的按住（双击那两下）不冒新字，但**要撤掉按下时那句**「录音中…松手发送」：
+        // 松手这一下没有别人来接替它，不撤就会挂到那 30 秒的期限，看起来像还在录。
+        badge_state_clear_notice(&s_state);
+        break;
     case BADGE_VOICE_ACTION_NONE:
     default:
-        // 太短（双击那两下）和「松开时根本没在录」都不说话。
+        // 松开时根本没在录（按下被别的屏吃掉了 / 录音已经因为到上限自己停了）：屏幕上
+        // 那句话不是我们写的，别去动它。
         break;
     }
 }

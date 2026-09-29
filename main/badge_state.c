@@ -34,6 +34,12 @@ void badge_state_notice(badge_state_t *state, const char *text, uint32_t duratio
     set_notice(state, text, duration_ms);
 }
 
+void badge_state_clear_notice(badge_state_t *state)
+{
+    state->notice[0] = '\0';
+    state->notice_deadline = 0;
+}
+
 // 信息屏停留多久。它是一眼的信息，不是要停在那里的状态——8 秒够看完三行，久了就变成
 // 挡在主屏前面的东西。
 #define BADGE_INFO_MS 8000U

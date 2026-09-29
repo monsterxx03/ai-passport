@@ -95,6 +95,13 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message);
 // 按下一个键之后界面上必须有动静，否则用户只能靠猜。
 void badge_state_notice(badge_state_t *state, const char *text, uint32_t duration_ms);
 
+// badge_state_clear_notice 把那一行提示立刻撤掉（本来就没有就什么都不做）。
+//
+// 给「按住说话」用的：按下时写的那句「录音中…松手发送」在**松开得太短、整段作废**时
+// 没有别人来接替它——不撤的话它会一直挂到期限（那一下设的是 30 秒），屏幕上看起来像
+// 还在录音。
+void badge_state_clear_notice(badge_state_t *state);
+
 // badge_state_info_open 打开会话信息屏（双击确定时调）。此刻数据可能还没到——那一屏
 // 会先显示一句「读取中…」，回执到了再填上（见 badge_state_apply 的 BADGE_MSG_INFO）。
 void badge_state_info_open(badge_state_t *state);
