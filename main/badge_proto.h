@@ -9,6 +9,14 @@
 // 一条消息里数组的长度——而它们在主机上都能试出来。
 #pragma once
 
+// 协议版本。设备在 hello 里报它，主机不匹配就不服务这条连接（那边的常量是
+// desktop/link/link.go 的 Proto）。这是这条链路上唯一一个**两边各存一份、而没有任何东西
+// 能替对方检查**的数字，所以改协议时两处必须一起改：
+//
+//   2：删掉 info / info_request（设备上那张会话账目屏没了），加上 hud（小窗状态）与
+//      key（设备的按键手势）。
+#define BADGE_PROTO_VERSION 2
+
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -63,18 +71,9 @@ typedef enum {
     BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
     BADGE_MSG_ALERT,    // 响一声：有事等你，或者一个回合跑完了
     BADGE_MSG_VOICE_TEXT, // 刚才那段语音转成了什么，以及它到哪了
-    BADGE_MSG_INFO,       // 「看一眼这个会话的账」的答案
+    BADGE_MSG_HUD,        // 小窗（桌面上那块置顶面板）此刻开没开
 } badge_msg_kind_t;
 
-// 会话信息屏那几行。字段全是**主机格式化好的字符串**（"12.3k / 32k (39%)"、"$0.42"）：
-// 排版是语义，而语义留在主机——设备只负责把它们画出来，不必知道 k 是什么、货币怎么写、
-// 窗口未知时该不该显示百分比。空字符串表示「这一项没有」，那一行不画。
-typedef struct {
-    char title[BADGE_TITLE_MAX];  // 谁的账。**不能省**：设备屏幕上可能正显示着另一个会话
-    char model[BADGE_META_MAX];   // 在用什么模型
-    char context[BADGE_META_MAX]; // 上下文占用（窗口未知时只有 tokens）
-    char cost[BADGE_META_MAX];    // 花了多少
-} badge_info_t;
 
 // 语音回执里那两种结局：已经发给会话了，还是在队列里等一个 steer 点。这是「你那句话
 // 到哪了」的全部答案（tachi 那份设计文档 §5），设备据此决定说「已发送」还是「排队中」。
@@ -162,8 +161,11 @@ typedef struct {
     // BADGE_MSG_ALERT：放哪一段音频（BADGE_ALERT_NONE 表示这条消息不认识，忽略）
     badge_alert_kind_t alert_kind;
 
-    // BADGE_MSG_INFO：那一屏的几行字，原样显示。
-    badge_info_t info;
+    // BADGE_MSG_HUD：桌面上那块小窗（HUD）现在开着没有。
+    //
+    // 设备据它决定状态屏底栏写什么、以及短上/短下要不要发上去（见 main.c 的按键路由）。
+    // 它不知道小窗里是什么内容——那是主机的事，设备只负责把这几个键的意思说给主机听。
+    bool hud_open;
 
     // BADGE_MSG_VOICE_TEXT：转写出来的那一句，以及它到哪了。
     //
@@ -191,10 +193,16 @@ size_t badge_proto_answer_permission(char *out, size_t cap, unsigned long ref,
 // badge_proto_answer_questions 组装提问的回答。keys 是**问题全文**（必须与收到的
 // 一字不差，所以调用方直接用 badge_question_t.question），values 是选中的标签，
 // 多选时由调用方先用 ", " 拼好——这与 TUI / desktop 的约定一致，模型看到的是同一个形状。
-// badge_proto_info_request 问一次「当前会话的账」（双击确定时发）。它是一次一问一答：
-// 主机回一条 info，没有 info 就没什么可显示的。
-size_t badge_proto_info_request(char *out, size_t cap);
-
 size_t badge_proto_answer_questions(char *out, size_t cap, unsigned long ref,
                                     const char *const *keys, const char *const *values,
                                     size_t count);
+
+// badge_proto_key 上报一次按键手势（短上/短下/短按确定/双击确定）。
+//
+// 它是**手势**而不是动作：设备只说「你按了哪一下」，那意味着什么由主机决定（小窗开着时
+// 上下是翻页、确定是关掉；关着时双击是把它叫出来）。动作名留给设备去猜，两端的语义就
+// 各长一半，而「小窗」这个概念设备根本不知道。
+//
+// 设备只有在**有意义**的时候才发：小窗关着时的短上/短下不发（主机那边无事可做），
+// 见 main.c 的按键路由。
+size_t badge_proto_key(char *out, size_t cap, const char *key);

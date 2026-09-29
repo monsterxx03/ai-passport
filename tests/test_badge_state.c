@@ -636,6 +636,39 @@ static void test_alert_kinds_reach_the_state(void)
     assert(state.alert_pending == BADGE_ALERT_DONE);
 }
 
+// 小窗（HUD）的状态：主机说它开着没有，设备据此决定底栏那一句、以及短上/短下要不要发。
+//
+// 钉三件事：开着时状态是「开」、**重复发同一条不该报「变了」**（每次重绘都要动 LVGL，
+// 而主机每轮推送都可能重发它）、以及开着的时候视图仍然是状态屏（小窗在电脑上，不是设备
+// 上的第四块屏）。
+static void test_hud_state_reaches_the_state_and_the_ui(void)
+{
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    assert(!badge_state_hud_open(&state));
+
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_HUD;
+    message.hud_open = true;
+    assert(badge_state_apply(&state, &message));
+    assert(badge_state_hud_open(&state));
+
+    // 同一条再来一次：没变就不报，省掉一次全屏重绘。
+    assert(!badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_STATUS);
+    assert(snapshot.hud_open);
+
+    message.hud_open = false;
+    assert(badge_state_apply(&state, &message));
+    assert(!badge_state_hud_open(&state));
+    badge_state_to_ui(&state, &snapshot);
+    assert(!snapshot.hud_open);
+}
+
 // 状态屏空闲时底栏那两条提示要轮换（一行放不下两条，见 badge_state_hint_phase）。
 // 钉三件事：开机是第一条、过一个周期翻面、以及**翻面那一刻 tick 必须说自己变了**——
 // 渲染只在「变了」的时候发生，不报的话屏幕上那句永远不换。
@@ -708,6 +741,7 @@ int main(void)
     test_keys_do_nothing_without_an_ask();
     test_ui_prefers_the_session_that_is_waiting();
     test_alert_kinds_reach_the_state();
+    test_hud_state_reaches_the_state_and_the_ui();
     test_idle_hint_rotates();
     test_notice_can_be_cleared();
     printf("test_badge_state: OK\n");

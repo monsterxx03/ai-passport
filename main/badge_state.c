@@ -40,10 +40,6 @@ void badge_state_clear_notice(badge_state_t *state)
     state->notice_deadline = 0;
 }
 
-// 信息屏停留多久。它是一眼的信息，不是要停在那里的状态——8 秒够看完三行，久了就变成
-// 挡在主屏前面的东西。
-#define BADGE_INFO_MS 8000U
-
 uint8_t badge_state_hint_phase(const badge_state_t *state)
 {
     return (uint8_t)((state->now / BADGE_HINT_ROTATE_MS) % 2U);
@@ -59,10 +55,6 @@ bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
         state->notice[0] = '\0';
         changed = true;
     }
-    if (state->info_open && state->now >= state->info_deadline) {
-        state->info_open = false;
-        changed = true;
-    }
     // 底栏那两条提示的轮换（见 badge_state_hint_phase）：翻面也要报一次「变了」，否则
     // 那句话永远停在同一条上——渲染只在「变了」的时候发生（main.c 的 dirty）。
     // 注意这里是累加而不是提前 return：上面两条过期判定不能被这件事顶掉。
@@ -72,20 +64,9 @@ bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms)
     return changed;
 }
 
-void badge_state_info_open(badge_state_t *state)
+bool badge_state_hud_open(const badge_state_t *state)
 {
-    state->info_open = true;
-    state->info_deadline = state->now + BADGE_INFO_MS;
-}
-
-void badge_state_info_close(badge_state_t *state)
-{
-    state->info_open = false;
-}
-
-bool badge_state_info_visible(const badge_state_t *state)
-{
-    return state->info_open;
+    return state->hud_open;
 }
 
 void badge_state_set_connected(badge_state_t *state, bool connected)
@@ -221,11 +202,13 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
         set_notice(state, line, 8000U);
         return true;
     }
-    case BADGE_MSG_INFO:
-        // 那一屏的几行字到了。**顺便把它打开**：设备双击之后先开屏、再等回执，所以
-        // 「数据到了」和「该显示它了」是同一件事——设备侧不必自己记住它在等什么。
-        state->info = message->info;
-        badge_state_info_open(state);
+    case BADGE_MSG_HUD:
+        // 小窗开了/关了。变了才报「变了」：这条消息每轮推送都可能重发（主机的去抖管着
+        // 它，但重连时的全量是无条件的），而每报一次都要重绘一屏——没变就不该重绘。
+        if (state->hud_open == message->hud_open) {
+            return false;
+        }
+        state->hud_open = message->hud_open;
         return true;
     case BADGE_MSG_ALERT:
         // 主机说「响一声」：它知道自己在不在前台、用户正在看哪个会话，而这块屏上
@@ -447,16 +430,10 @@ void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot
         snapshot->question_index = state->question_index;
         snapshot->checked = state->picked[state->question_index];
     }
-    // 优先级：待答屏 > 信息屏 > 状态屏。有人在等永远比「看一眼账」要紧，而账什么时候
-    // 看都行——所以信息屏被一条 ask 顶掉是应该的。
-    if (state->ask_count > 0U) {
-        snapshot->view = BADGE_UI_ASK;
-    } else if (state->info_open) {
-        snapshot->view = BADGE_UI_INFO;
-        snapshot->info = &state->info;
-    } else {
-        snapshot->view = BADGE_UI_STATUS;
-    }
+    // 只有两屏了：有事等你（待答屏）和平时（状态屏）。小窗不是第三屏——它在电脑上，
+    // 设备这边只是它的一副按键（底栏那一句提示）。
+    snapshot->view = (state->ask_count > 0U) ? BADGE_UI_ASK : BADGE_UI_STATUS;
+    snapshot->hud_open = state->hud_open;
     // 底栏那两条提示该显示哪一条。放在这里而不是界面里：相位是时间推出来的（状态机的
     // 时钟），界面只读它——它不该自己养一个计时器。
     snapshot->hint_phase = badge_state_hint_phase(state);

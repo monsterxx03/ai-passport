@@ -34,7 +34,6 @@
 extern const lv_image_dsc_t badge_avatar;
 
 static lv_obj_t *s_status_scr;
-static lv_obj_t *s_info_scr;
 static lv_obj_t *s_ask_scr;
 static lv_obj_t *s_pair_scr;
 
@@ -45,11 +44,6 @@ static lv_obj_t *s_st_title;
 static lv_obj_t *s_st_detail;
 static lv_obj_t *s_st_tools;
 static lv_obj_t *s_st_footer;
-static lv_obj_t *s_inf_title;
-static lv_obj_t *s_inf_battery;
-static lv_obj_t *s_inf_model;
-static lv_obj_t *s_inf_context;
-static lv_obj_t *s_inf_cost;
 
 static lv_obj_t *s_ak_heading;
 static lv_obj_t *s_ak_battery;
@@ -293,42 +287,11 @@ static void build_pair_screen(void)
     lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -34);
 }
 
-// 会话信息屏。它和状态屏刻意长得不一样：那边是「它此刻在干什么」，这里是**这个会话的
-// 账**——一屏静态的、看一眼就走的数字。三行都居中，因为每一行自己就说明了自己是什么
-// （"gpt-5" / "12.3k / 32k (39%)" / "$0.42"），再加标签只会把这一行挤窄。
-static void build_info_screen(void)
-{
-    s_info_scr = make_screen();
-
-    // 会话名不能省：设备屏幕上此刻可能正显示着**另一个**会话在等你，而这一屏说的是当前
-    // 活跃会话的账。少了它，这一屏就是在误导。
-    s_inf_title = make_label(s_info_scr, COL_MUTED);
-    one_line(s_inf_title, 140, false);
-    lv_obj_align(s_inf_title, LV_ALIGN_TOP_LEFT, 20, 16);
-
-    // 电量照旧放右上角（这块板上每一屏都有它）。
-    s_inf_battery = make_label(s_info_scr, COL_MUTED);
-    lv_obj_align(s_inf_battery, LV_ALIGN_TOP_RIGHT, -20, 16);
-
-    s_inf_model = make_label(s_info_scr, COL_TEXT);
-    one_line(s_inf_model, 200, true);
-    lv_obj_align(s_inf_model, LV_ALIGN_TOP_MID, 0, 96);
-
-    s_inf_context = make_label(s_info_scr, COL_TEXT);
-    one_line(s_inf_context, 200, true);
-    lv_obj_align(s_inf_context, LV_ALIGN_TOP_MID, 0, 136);
-
-    s_inf_cost = make_label(s_info_scr, COL_MUTED);
-    one_line(s_inf_cost, 200, true);
-    lv_obj_align(s_inf_cost, LV_ALIGN_TOP_MID, 0, 176);
-}
-
 void badge_ui_init(void)
 {
     build_status_screen();
     build_ask_screen();
     build_pair_screen();
-    build_info_screen();
     s_current_scr = s_status_scr;
     lv_screen_load(s_status_scr);
 }
@@ -359,6 +322,10 @@ static void set_battery(lv_obj_t *label, const badge_ui_snapshot_t *snapshot)
 // 键名（上 / 确定）和动作词都跟这块屏别处的叫法一致（「再长按一次上：忘记电脑」）。
 static const char *const STATUS_HINTS[2] = {"长按上：忘记电脑", "按住确定：说话"};
 
+// 小窗开着时底栏那一句（见 set_status_footer）。它必须短——底栏一行只放得下 220px 左右，
+// 而这句话还兼着「小窗开着」这个状态说明（屏幕上没有别的地方能说这件事）。
+#define STATUS_HUD_HINT "上下翻 · 确定关小窗"
+
 // 状态屏底栏。一次性提示优先——它说的是刚发生的事（「已忘记那台电脑」），而这块
 // 屏幕上是唯一能把它讲出来的地方；没有提示时才轮到「另有 N 个会话在跑」。
 static void set_status_footer(const badge_ui_snapshot_t *snapshot)
@@ -387,6 +354,17 @@ static void set_status_footer(const badge_ui_snapshot_t *snapshot)
         (void)snprintf(footer, sizeof(footer), "另有 %u 个会话在跑",
                        (unsigned)(snapshot->session_total - 1U));
         lv_label_set_text(s_st_footer, footer);
+        return;
+    }
+    // 小窗（桌上的置顶面板）开着：这一格改成它的按键说明。上下/确定此刻的意思变了
+    // （见 main.c 的按键路由），而屏幕上本来没有任何东西表明它开着——这一句既是「它开着」
+    // 也是「这几个键现在干什么」。
+    //
+    // 它抢的只是**空闲提示**这一格（下面那两条轮换），不是录音 / 一次性提示 / 「另有 N 个
+    // 会话」：那三样说的是刚发生的事和别处在跑什么，都比一句用法要紧，而空闲时刻这一格
+    // 本来也没有别的用处。
+    if (snapshot->hud_open) {
+        lv_label_set_text(s_st_footer, STATUS_HUD_HINT);
         return;
     }
     // 空闲：没有提示、没有别的会话、也没在录音。此刻这块屏唯一还能告诉用户的，就是那两个
@@ -433,21 +411,6 @@ static void render_pair(const badge_ui_snapshot_t *snapshot)
         // 协议栈给的一定是 6 位（badge_ble 用 %06u 生成），这里只是不替它假设。
         lv_label_set_text(s_pair_code, snapshot->passkey);
     }
-}
-
-static void render_info(const badge_ui_snapshot_t *snapshot)
-{
-    const badge_info_t *info = snapshot->info;
-
-    // 拿不到数据的那一刻（刚双击、回执还在路上）显示一句「读取中…」，而不是空白——
-    // 空白看起来像这一屏坏了。
-    lv_label_set_text(s_inf_title,
-                      (info != NULL && info->title[0] != '\0') ? info->title : "读取中…");
-    set_battery(s_inf_battery, snapshot); // 电量那一格与状态屏共用一处实现（含「读不到」）
-    // 空的项就画空：主机那边「这一项没有」用的就是空串（见 badge_proto.h 的 badge_info_t）。
-    lv_label_set_text(s_inf_model, (info != NULL) ? info->model : "");
-    lv_label_set_text(s_inf_context, (info != NULL) ? info->context : "");
-    lv_label_set_text(s_inf_cost, (info != NULL) ? info->cost : "");
 }
 
 // render_tool_line 画「第 N 个工具调用」那一行。
@@ -718,11 +681,6 @@ void badge_ui_render(const badge_ui_snapshot_t *snapshot)
     } else if (snapshot->view == BADGE_UI_ASK) {
         render_ask(snapshot);
         wanted = s_ask_scr;
-    } else if (snapshot->view == BADGE_UI_INFO) {
-        // 它在配对屏与待答屏**之后**：那两件事都比「看一眼账」要紧（一个是此刻唯一的
-        // 任务，一个是有人在等你），而账什么时候看都行。
-        render_info(snapshot);
-        wanted = s_info_scr;
     } else {
         render_status(snapshot);
         wanted = s_status_scr;

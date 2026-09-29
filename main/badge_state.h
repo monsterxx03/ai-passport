@@ -31,7 +31,7 @@ typedef enum {
     BADGE_KEY_OK,     // 短按确定：单选=选中并前进；多选=勾选/取消勾选
     BADGE_KEY_SUBMIT, // 长按确定：提交。换题走 PREV/NEXT，这样一套手势对两种题型都成立
                       // （待答屏专用：状态屏上的确定键现在是「按住说话」，见 TALK_*）
-    BADGE_KEY_INFO,   // 双击确定：看一眼当前会话的账（模型、上下文、花费）
+    BADGE_KEY_HUD_SHOW, // 双击确定：把桌面上的小窗叫出来（内容由主机给，设备不看它）
     BADGE_KEY_TALK_START, // 按住确定（按下那一下）：开始录
     BADGE_KEY_TALK_END,   // 松开确定（抬起那一下）：结束并发送
 } badge_key_t;
@@ -67,11 +67,13 @@ typedef struct {
     // 而状态机是纯逻辑、能在主机上测。
     badge_alert_kind_t alert_pending;
 
-    // 会话信息屏那几行。它是一眼的东西，不是要停在那里的状态：所以有截止时间，到点自己
-    // 回主屏（见 badge_state_tick）。数据由主机填（双击之后回一条 info）。
-    badge_info_t info;
-    bool info_open;
-    uint32_t info_deadline;
+    // 桌面那块小窗（HUD）开着没有。由主机说（BADGE_MSG_HUD），设备只据它做两件事：
+    // 状态屏底栏写什么，以及短上/短下要不要发上去（见 main.c 的按键路由）。
+    //
+    // 刻意**没有**截止时间：它不是设备自己开的一屏，什么时候关由主机决定——主机那边窗口
+    // 真的没了才会发 open=false。设备这一侧自己超时收起会做出「屏幕上说关着、主机那边还
+    // 开着」这种两边不一致的状态。
+    bool hud_open;
 } badge_state_t;
 
 void badge_state_init(badge_state_t *state);
@@ -102,15 +104,11 @@ void badge_state_notice(badge_state_t *state, const char *text, uint32_t duratio
 // 还在录音。
 void badge_state_clear_notice(badge_state_t *state);
 
-// badge_state_info_open 打开会话信息屏（双击确定时调）。此刻数据可能还没到——那一屏
-// 会先显示一句「读取中…」，回执到了再填上（见 badge_state_apply 的 BADGE_MSG_INFO）。
-void badge_state_info_open(badge_state_t *state);
-
-// badge_state_info_close 收起它。任何一次按键都该调它：那是一眼的东西，看完就走。
-void badge_state_info_close(badge_state_t *state);
-
-// badge_state_info_visible 它此刻开着吗（按键路径据此决定「这一下是收起它还是干别的」）。
-bool badge_state_info_visible(const badge_state_t *state);
+// badge_state_hud_open 回答「桌面上那块小窗现在开着吗」。
+//
+// 按键路由要问它（开着时上下/确定的意思变了），底栏提示也要问它。它只是主机发来的
+// 那份状态，设备不解释、也不自己超时（见 badge_state_t.hud_open 的注释）。
+bool badge_state_hud_open(const badge_state_t *state);
 
 // badge_state_key 处理一次按键。
 //

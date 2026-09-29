@@ -39,6 +39,18 @@ static unsigned long take_ulong(const bjson_val_t *obj, const char *key)
     return number < 0L ? 0UL : (unsigned long)number;
 }
 
+// take_bool 取一个布尔字段。缺字段、或者字段不是布尔，都按 fallback 处理——bjson_bool
+// 自己就带这一层（见 badge_json.h）。
+static bool take_bool(const bjson_val_t *obj, const char *key, bool fallback)
+{
+    bjson_val_t value;
+
+    if (!bjson_obj_get(obj, key, &value)) {
+        return fallback;
+    }
+    return bjson_bool(&value, fallback);
+}
+
 static void take_options(const bjson_val_t *owner, badge_option_t *options, size_t *count,
                          size_t max, size_t *total)
 {
@@ -265,14 +277,14 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
         }
         return false;
     }
-    if (strcmp(kind, "info") == 0) {
-        // 「看一眼这个会话的账」的答案。设备只是显示它——这几行里的每个字都已经由主机
-        // 排好版了（见 badge_proto.h 里 badge_info_t 的注释）。
-        out->kind = BADGE_MSG_INFO;
-        (void)take_string(&root, "title", out->info.title, sizeof(out->info.title));
-        (void)take_string(&root, "model", out->info.model, sizeof(out->info.model));
-        (void)take_string(&root, "context", out->info.context, sizeof(out->info.context));
-        (void)take_string(&root, "cost", out->info.cost, sizeof(out->info.cost));
+    if (strcmp(kind, "hud") == 0) {
+        // 桌面上那块置顶小窗的状态。设备只读它，不当它是内容——小窗里写的是什么，
+        // 这条链路上一个字节都不会过来（见 badge_proto.h 的 BADGE_MSG_HUD）。
+        //
+        // 缺 open 字段时按「关着」处理：老主机会跳过它，而「关着」是更保守的那个默认
+        // （关着时上下键不发上去，屏幕只是少了一句提示）。
+        out->kind = BADGE_MSG_HUD;
+        out->hud_open = take_bool(&root, "open", false);
         return true;
     }
     if (strcmp(kind, "voice_text") == 0) {
@@ -377,7 +389,9 @@ size_t badge_proto_hello(char *out, size_t cap, const char *firmware)
     writer_t w;
 
     writer_init(&w, out, cap);
-    writer_literal(&w, "{\"t\":\"hello\",\"proto\":1,\"fw\":");
+    writer_literal(&w, "{\"t\":\"hello\",\"proto\":");
+    writer_ulong(&w, (unsigned long)BADGE_PROTO_VERSION);
+    writer_literal(&w, ",\"fw\":");
     writer_escaped(&w, firmware != NULL ? firmware : "");
     writer_literal(&w, "}");
     return writer_finish(&w);
@@ -394,12 +408,17 @@ size_t badge_proto_sync(char *out, size_t cap, unsigned long since)
     return writer_finish(&w);
 }
 
-size_t badge_proto_info_request(char *out, size_t cap)
+size_t badge_proto_key(char *out, size_t cap, const char *key)
 {
     writer_t w;
 
+    if (key == NULL) {
+        return 0U;
+    }
     writer_init(&w, out, cap);
-    writer_literal(&w, "{\"t\":\"info\"}");
+    writer_literal(&w, "{\"t\":\"key\",\"key\":");
+    writer_escaped(&w, key);
+    writer_literal(&w, "}");
     return writer_finish(&w);
 }
 

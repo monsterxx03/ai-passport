@@ -179,9 +179,10 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
         } else if (event == BSP_BTN_LONG) {
             queued.key = BADGE_KEY_SUBMIT;
         } else if (event == BSP_BTN_DOUBLE) {
-            // 双击确定：看一眼当前会话的账（模型、上下文、花费）。双击在三个键上本来都
-            // 空着，而这一件事值得一个手势——它是你在设备旁边最想知道的那个数。
-            queued.key = BADGE_KEY_INFO;
+            // 双击确定：把桌面上的小窗叫出来（重看最近一条回复）。双击在三个键上都空着，
+            // 而「刚才它说了什么」正是人离开电脑之后最想知道的那件事——内容在电脑上，
+            // 屏幕上只给这一句：它开没开、以及那几个键现在干什么（见底栏提示）。
+            queued.key = BADGE_KEY_HUD_SHOW;
         } else if (event == BSP_BTN_PRESS) {
             // 按住说话：**按下**和**松开**都要送进队列（见 handle_key 的 TALK 分支）。
             // 缺了任何一个，录着的那一段就没人收尾。
@@ -416,27 +417,6 @@ static void handle_key(const badge_key_event_t *event)
     static char payload[BADGE_ANSWER_MAX];
     size_t length = 0;
 
-    // 信息屏是一眼的东西：任何一次按键都把它收起来（再看就再双击一次）。这排在别的路由
-    // 之前——否则「看一眼账」的那一屏上按确定会去录音，而那显然不是人的意思。
-    if (badge_state_info_visible(&s_state)) {
-        badge_state_info_close(&s_state);
-        return;
-    }
-
-    // 主屏双击确定 = 问一次「这个会话的账」：先开屏（先显示一句「读取中…」），数据由
-    // 主机回的那条 info 填上。它只在主屏有意义——上面的信息屏与下面的待答屏都各有各的
-    // 按键含义，不该被这个手势插进来。
-    if (event->key == BADGE_KEY_INFO && s_state.ask_count == 0U) {
-        char request[32];
-        const size_t length = badge_proto_info_request(request, sizeof(request));
-
-        if (length > 0U) {
-            (void)send_line(request, length);
-        }
-        badge_state_info_open(&s_state);
-        return;
-    }
-
     // 按住确定 = 说话（设计文档 §3 的首选，见 handle_voice_key）：**按下**那一下开始录，
     // **松开**那一下结束并发送。它排在最前面，因为按住这段横跨好几次按键，中途别的路由
     // 都该给它让路。
@@ -463,6 +443,52 @@ static void handle_key(const badge_key_event_t *event)
         badge_voice_cancel();
         badge_state_notice(&s_state, "已取消", 2500U);
         return;
+    }
+
+    // 桌面上那块小窗（HUD）的按键路由。
+    //
+    // 它是一个**模式**：主机说小窗开着的时候，状态屏上这几个键的意思就变了。设备不知道小窗里
+    // 是什么、也不知道该翻多少——它只把「你按了哪一下」报上去（badge_proto_key），含义在主机
+    // 那边（desktop/badge.go 的 Key）。
+    //
+    // 三条边界：
+    //   - 它排在「按住说话」和「录音中按上 = 丢弃这段」**之后**：那两件事横跨好几次按键，
+    //     中途不能被模式吞掉（按下的那一下先到 TALK_START，松开才轮到这里的 CLICK）。
+    //   - 只在主屏（没有待答项）上做：有人在等你回答时，那几个键的意义是**回答**，不能
+    //     因为电脑上碰巧开着一块面板就改掉。
+    //   - 关着时短上/短下**不发**：主机那边无事可做，发了只是白占这条链路的字节。
+    //     （双击仍然发：那是「叫出来」。）
+    if (s_state.ask_count == 0U) {
+        const bool hud = badge_state_hud_open(&s_state);
+        const char *action = NULL;
+
+        if (event->key == BADGE_KEY_HUD_SHOW) {
+            // 开着时再来一下 = 关掉（同一件事的另一个方向，按了不会有坏处）。
+            action = hud ? "ok" : "ok_double";
+        } else if (hud) {
+            switch (event->key) {
+            case BADGE_KEY_UP:
+                action = "up";
+                break;
+            case BADGE_KEY_DOWN:
+                action = "down";
+                break;
+            case BADGE_KEY_OK:
+                action = "ok";
+                break;
+            default:
+                break;
+            }
+        }
+        if (action != NULL) {
+            char line[32];
+            const size_t length = badge_proto_key(line, sizeof(line), action);
+
+            if (length > 0U) {
+                (void)send_line(line, length);
+            }
+            return;
+        }
     }
 
     // 主屏（没有等待项）上剩下的那个长按：

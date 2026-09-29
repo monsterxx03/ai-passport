@@ -29,7 +29,6 @@ extern const lv_font_t badge_font_icon_16;
 typedef enum {
     BADGE_UI_STATUS = 0, // 平时：谁在跑、跑到哪一步
     BADGE_UI_ASK,        // 有事等你：权限确认，或模型提的问题
-    BADGE_UI_INFO,       // 双击确定看的那一眼：模型、上下文、花费
     BADGE_UI_VIEW_COUNT, // 计数用（不是一屏）
 } badge_ui_view_t;
 
@@ -87,9 +86,11 @@ typedef struct {
     // 状态机按时间推进（badge_state_hint_phase），界面只按它选文案。
     uint8_t hint_phase;
 
-    // 会话信息屏那几行（非空 = 显示那一屏）。是**指针**：数据和字符串都活在状态机里，
-    // 界面只读它——复制一份只会多一个会失同步的地方。
-    const badge_info_t *info;
+    // 桌面上那块小窗（HUD）开着没有。界面用它决定底栏那一句：开着时那一格改成它的
+    // 按键说明（上下翻 / 确定关），关着时还是那两条轮换的手势提示。
+    //
+    // 它**不是**一屏：小窗在电脑上，设备这边只是它的三个键。
+    bool hud_open;
 
     // 录音中：已录多久、上限多少（毫秒）。recording 为 false 时这两个数没有意义。
     //
