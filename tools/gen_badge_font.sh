@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# 生成设备侧的中文字体（main/badge_font_16.c）。
+# 生成设备侧的字体：main/badge_font_16.c（中文）与 main/badge_font_icon_16.c（两枚传输图标）。
 #
-# 为什么生成结果不进仓库：它是从**本机**的中文字体文件切出来的，而 macOS 自带的
-# 中文字体（Arial Unicode、Hiragino）授权不允许再分发，且源码文本有 15MB。
-# 要对外发布时，把 BADGE_FONT_SOURCE 指向一份 OFL 字体（思源黑体 / Noto Sans SC）
-# 即可，脚本其余部分不用动；那时再把产物连同来源与授权一起提交。
+# 产物**随仓库分发**（18 MB 左右的源码文本），所以平时不需要跑这个脚本——只有换字体、
+# 改字符范围、或者动了字号时才重新生成一次。
 #
-# 字符范围：ASCII、CJK 标点、CJK 统一表意文字、全角形式。不逐字枚举是因为这块屏
-# 要显示的是 tachi 下发的**任意**中文（会话标题、命令预览、模型提的问题），
-# 而 LVGL 内置的 CJK 子集小到连「脑」「还」「连」都不含——缺一个字就是一个方框。
+# 也正因为产物入库，源字体必须是**允许再分发**的：默认用 LVGL 组件里自带的那份思源黑体
+# （Source Han Sans SC，SIL OFL 1.1），它跟依赖一起拉下来，不需要额外下载。系统自带的
+# 中文字体（Arial Unicode、Hiragino）授权不允许再分发，**不要**用它们生成要提交的产物。
 set -euo pipefail
 
-FONT="${BADGE_FONT_SOURCE:-/Library/Fonts/Arial Unicode.ttf}"
+FONT="${BADGE_FONT_SOURCE:-}"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${ROOT}/main/badge_font_16.c"
+if [[ -z "${FONT}" ]]; then
+    FONT="${ROOT}/managed_components/lvgl__lvgl/scripts/built_in_font/SourceHanSansSC-Normal.otf"
+fi
 # 字符范围要覆盖**设备上会出现的任意字符**，而不只是「常用汉字」：
 #   - 基本拉丁：ASCII 与英文 UI
 #   - 拉丁补充：`·`(U+00B7)、`°`、`×` 这些标点与人名里的重音字母
@@ -51,3 +52,40 @@ npx -y lv_font_conv@1.5.2 \
     -o "${OUT}"
 
 echo "已生成 ${OUT}（$(du -h "${OUT}" | cut -f1)）"
+
+# ── 图标字体（main/badge_font_icon_16.c）─────────────────────────────────────
+#
+# 顶栏那两枚图标（USB / 蓝牙）没有任何 Unicode 码位，所以它们只能来自**图标字体**的
+# 私有区：USB = U+F287、蓝牙 = U+F293，两个都是 FontAwesome 的 brands 字形。默认就用
+# LVGL 组件里自带的那份 FontAwesome（`scripts/built_in_font/`，跟依赖一起拉下来，
+# 不需要额外下载）；它的授权文本在同一目录的 `font_license/FontAwesome5/LICENSE.txt`。
+# 要换别的图标字体就设 BADGE_ICON_FONT_SOURCE（例如本机装了 Nerd Font 的话）。
+#
+# 单独一份字体、而不是并进上面那份，是为了「缺了会响」：图标字体没生成时是链接期
+# 找不到符号，而并进中文字体时缺字只会变成屏幕上一个方框（那正是这份文档反复警告的
+# 失败方式）。代价是脚本多一次 npx 调用。
+ICON_FONT="${BADGE_ICON_FONT_SOURCE:-}"
+ICON_OUT="${ROOT}/main/badge_font_icon_16.c"
+ICON_RANGES="0xF287,0xF293"
+ICON_FONT_DEFAULT="${ROOT}/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff"
+
+if [[ -z "${ICON_FONT}" ]]; then
+    ICON_FONT="${ICON_FONT_DEFAULT}"
+fi
+
+if [[ ! -f "${ICON_FONT}" ]]; then
+    echo "找不到图标字体（USB / 蓝牙两枚图标在里面）：${ICON_FONT}" >&2
+    echo "它本该随依赖一起拉下来——先跑一次 idf.py build，或者用" >&2
+    echo "BADGE_ICON_FONT_SOURCE=<一份含 U+F287/U+F293 的 TTF/OTF/WOFF> 指定别的。" >&2
+    exit 1
+fi
+
+npx -y lv_font_conv@1.5.2 \
+    --font "${ICON_FONT}" \
+    --size 16 --bpp 4 \
+    --range "${ICON_RANGES}" \
+    --no-compress \
+    --format lvgl --lv-include lvgl.h \
+    -o "${ICON_OUT}"
+
+echo "已生成 ${ICON_OUT}（图标来自 ${ICON_FONT}）"

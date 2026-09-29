@@ -27,8 +27,10 @@ your only job and everything else is noise.
 
 Buttons: a short up/down moves between options, OK submits. On a multi-select question OK toggles
 and a long press submits; when one ask holds several questions, a **long up/down switches
-questions** (a single-select question advances on its own once answered). On the status screen a long
-press on OK forgets the computer (twice — the first press only asks).
+questions** (a single-select question advances on its own once answered). **When the body does not
+fit, a long up/down pages through it** (one screenful, 3 lines) and only switches questions at either
+end; when it fits, nothing changes. On the status screen a long press on OK forgets the computer
+(twice — the first press only asks).
 
 The screen also goes quiet on its own: with nothing pending and nobody pressing anything, the
 backlight turns off after 60 seconds. What saves power is the backlight, not sleeping the chip —
@@ -78,10 +80,11 @@ idf.py build
 idf.py -p /dev/cu.usbmodem2101 flash
 ```
 
-### Generate the avatar first
+### The avatar (committed)
 
-The middle of the status screen is tachi's face (no longer a placeholder circle), also a generated
-artifact cut from tachi's app icon and not committed:
+The middle of the status screen is tachi's face (no longer a placeholder circle). It is generated
+too, but it **ships with the repository** (`main/badge_avatar.c`, 180 KB), so a clone has it;
+regenerate only when the face changes:
 
 ```bash
 uv run tools/mk_badge_avatar.py        # deps are declared in the script; uv handles the env
@@ -91,23 +94,31 @@ It reads `~/repos/tachi/desktop/build/appicon.png` by default; `BADGE_AVATAR_SRC
 Changing the face is a one-place edit: the script trims the white margin, scales to 120x120 and
 paints the corners with the screen's background colour.
 
-### Generate the Chinese font first
+### Fonts (committed; you normally never touch this)
 
 The Chinese text on screen comes from tachi (session titles, command previews, the questions the
 model asks), so the font has to cover **arbitrary** common Han characters — LVGL's built-in CJK
 subset is small enough to lack everyday characters such as U+8111 (brain), U+8FD8 (still) and
 U+8FDE (connect), and a missing glyph is a hollow box.
 
-The font is generated, not committed: it is cut from a font on the local machine, macOS's own
-Chinese fonts may not be redistributed, and the source text is 15MB. Run this once before the first
-build:
+The generated fonts **ship with the repository** (`main/badge_font_16.c`, ~18 MB, and
+`main/badge_font_icon_16.c`, a few KB), so a clone builds as-is. Regenerate only when the source
+font, the character ranges or the size change:
 
 ```bash
-./tools/gen_badge_font.sh          # defaults to /Library/Fonts/Arial Unicode.ttf
+./tools/gen_badge_font.sh          # defaults to the Source Han Sans SC (OFL) that ships with the deps
 ```
 
-To publish, point it at an OFL font (Source Han Sans / Noto Sans SC); nothing else in the script
-changes. At that point the artifact, its source and its license can be committed together.
+The source font must be **redistributable**, because the artifact is committed: macOS's own Chinese
+fonts (Arial Unicode, Hiragino) are not. Use an OFL one — Source Han Sans / Noto Sans SC.
+
+The same script also generates `main/badge_font_icon_16.c`: the two **transport icons** in the top
+bar (USB / Bluetooth). Neither logo has a Unicode code point, so they can only come from an icon
+font's private use area (U+F287 / U+F293 — FontAwesome's brand glyphs); the script therefore uses
+the FontAwesome that ships inside the LVGL component (it arrives with the dependencies; its license
+text is next to it under `font_license/FontAwesome5/`). Point `BADGE_ICON_FONT_SOURCE` somewhere
+else to use a different icon font. It is a separate font rather than part of the Chinese one so that
+a missing icon fails the LINK instead of turning into a hollow box on the screen.
 
 ## Layout
 

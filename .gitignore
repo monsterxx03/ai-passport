@@ -5,10 +5,6 @@ managed_components/
 .vscode/
 .idea/
 
-# 生成的中文字体（tools/gen_badge_font.sh 用本机字体产出，约 15MB 源码）。
-/main/badge_font_16.c
-/main/badge_avatar.c
-
 # Generated repository-local links; canonical skill sources live in skills/.
 /.agents/skills/passport-develop
 /.agents/skills/passport-setup

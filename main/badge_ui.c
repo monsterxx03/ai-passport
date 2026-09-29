@@ -25,6 +25,8 @@
 // 那个子集小到连「脑」「还」「连」都不含，而这块屏要显示的是 tachi 下发的任意
 // 中文（会话标题、命令预览、模型提的问题），缺一个字就是方框。
 #define FONT_UI (&badge_font_16)
+// 顶栏那两枚传输图标走单独的图标字体（见 badge_ui.h 的声明）。
+#define FONT_ICON (&badge_font_icon_16)
 
 // tachi 的头像（tools/mk_badge_avatar.py 从 desktop 的 app 图标生成）。
 // 声明放在这里而不是头文件里：它是匿名结构体 typedef，没法前向声明，
@@ -47,6 +49,9 @@ static lv_obj_t *s_ak_heading;
 static lv_obj_t *s_ak_battery;
 static lv_obj_t *s_ak_subject;
 static lv_obj_t *s_ak_body;
+static lv_obj_t *s_ak_viewport;          // 正文的可滚容器：长题面靠它看全文
+static const badge_msg_t *s_ak_body_ask; // 正文此刻属于哪条等待
+static size_t s_ak_body_index;           // ...以及哪一题（换题要把正文滚回顶部）
 static lv_obj_t *s_ak_options[BADGE_MAX_OPTIONS];
 static lv_obj_t *s_ak_labels[BADGE_MAX_OPTIONS];
 static lv_obj_t *s_ak_footer;
@@ -103,15 +108,6 @@ static void one_line(lv_obj_t *label, int width, bool centered)
     }
 }
 
-// at_most_lines 允许最多 lines 行，超出在最后一行打点。题目正文与命令预览是唯一
-// 允许多行的区域，而它的高度就是面板留给它的那块空间——同样不能撑破面板压到选项上。
-static void at_most_lines(lv_obj_t *label, int width, int lines)
-{
-    lv_obj_set_width(label, width);
-    lv_obj_set_height(label, (int32_t)badge_font_16.line_height * lines);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
-}
-
 // 跑马灯速度（px/s）。它填进的是样式的 anim_duration——在 LVGL 9.5 里那个样式承载
 // 的是**速度**（LVGL 自己就这么用：把速度与时长上下限编码进一个值），不是一趟的毫秒
 // 数。默认 40 对这块小屏偏慢，长一点的选项要等好几秒才滚完。
@@ -149,7 +145,9 @@ static void build_status_screen(void)
 
     // 顶栏的传输指示：屏幕上写的和实际走的必须是同一条判据（见 main.c 的
     // active_transport）。紧跟在品牌右边，不占别的地方——这一栏一共也只有 240px。
+    // 两枚图标走图标字体（USB / 蓝牙的 logo 没有 Unicode 码位，见 badge_ui.h）。
     s_st_transport = make_label(s_status_scr, COL_MUTED);
+    lv_obj_set_style_text_font(s_st_transport, FONT_ICON, 0);
     lv_obj_align_to(s_st_transport, brand, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
 
     s_st_battery = make_label(s_status_scr, COL_MUTED);
@@ -213,10 +211,23 @@ static void build_ask_screen(void)
     one_line(s_ak_subject, 200, false);
     lv_obj_align(s_ak_subject, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    // 面板内高 84px，主题占掉 22px，正文最多 3 行（3×19=57）——再多就要压到选项上。
-    s_ak_body = make_label(panel, COL_TEXT);
-    at_most_lines(s_ak_body, 200, 3);
-    lv_obj_align(s_ak_body, LV_ALIGN_TOP_LEFT, 0, 22);
+    // 面板内高 84px，主题占掉 22px，正文视口最多 3 行（3×19=57）——再多就要压到选项上。
+    // 装不下的正文不再打点，而是**滚**：三枚按键是这块屏唯一的输入，而正文是长题面
+    // 与长命令预览里唯一没法压缩的东西（见 badge_ui_scroll）。
+    s_ak_viewport = plain(panel);
+    lv_obj_add_flag(s_ak_viewport, LV_OBJ_FLAG_SCROLLABLE); // plain 默认把它去掉
+    lv_obj_set_pos(s_ak_viewport, 0, 22);
+    lv_obj_set_size(s_ak_viewport, 200, (int32_t)badge_font_16.line_height * 3);
+    lv_obj_set_style_bg_opa(s_ak_viewport, LV_OPA_TRANSP, 0);
+    lv_obj_set_scroll_dir(s_ak_viewport, LV_DIR_VER);
+    // 滚动条只在滚动时出现（ACTIVE）：它的作用是「还能往下」的提示，而常显一条竖线
+    // 会压在这块小屏的正文上。
+    lv_obj_set_scrollbar_mode(s_ak_viewport, LV_SCROLLBAR_MODE_ACTIVE);
+    // 正文比视口窄 10px：滚动条画在容器右缘，留出这条槽它才不盖住最后一列字。
+    s_ak_body = make_label(s_ak_viewport, COL_TEXT);
+    lv_obj_set_width(s_ak_body, 190);
+    // 不再打点、也不定高：标签自然长高，容器才滚得动（打点会把内容截掉，没什么可滚）。
+    lv_label_set_long_mode(s_ak_body, LV_LABEL_LONG_MODE_WRAP);
 
     for (i = 0; i < BADGE_MAX_OPTIONS; ++i) {
         lv_obj_t *row = plain(s_ask_scr);
@@ -355,9 +366,11 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
 {
     set_battery(s_st_battery, snapshot);
     // 出方向走哪条链路是**路由事实**，不是「连没连上」：蓝牙没到「已认证加密」时
-    // 每一行都从串口出去，屏幕上就该这么写。
+    // 每一行都从串口出去，屏幕上就该这么画。字形来自图标字体（LV_SYMBOL_* 与
+    // tools/gen_badge_font.sh 里那两个码位是一对）。
     lv_label_set_text(s_st_transport,
-                      snapshot->transport == BADGE_UI_TRANSPORT_BLE ? "BLE" : "USB");
+                      snapshot->transport == BADGE_UI_TRANSPORT_BLE ? LV_SYMBOL_BLUETOOTH
+                                                                     : LV_SYMBOL_USB);
 
     // 这两行都能滚，但只有真放不下时才动（LVGL 自己比宽度）。会话标题是主机下发的、
     // 长度不归我们管；状态说明虽然是自己写的，也留出滚动的余地。息屏时必须停——
@@ -416,6 +429,22 @@ static bool option_checked(const badge_ui_snapshot_t *snapshot, size_t index)
     return (snapshot->checked & (uint8_t)(1U << index)) != 0U;
 }
 
+// ask_body_can_scroll 问正文视口还能不能往这个方向翻（direction < 0 往回翻）。
+//
+// 这是界面里唯一判断「装不装得下」的地方——LVGL 量出来的比任何按字符数估的都准，
+// 而正文里中文、ASCII、制表符的宽度差得很远。
+static bool ask_body_can_scroll(int direction)
+{
+    if (s_ak_viewport == NULL) {
+        return false;
+    }
+    // 先让布局算完再问：正文刚换过文本时几何还是上一屏的，那样问出来的答案是慢一拍的
+    // （底栏提示会跟着错）。
+    lv_obj_update_layout(s_ak_viewport);
+    return (direction < 0) ? lv_obj_get_scroll_top(s_ak_viewport) > 0
+                           : lv_obj_get_scroll_bottom(s_ak_viewport) > 0;
+}
+
 static void render_ask(const badge_ui_snapshot_t *snapshot)
 {
     const badge_msg_t *ask = snapshot->ask;
@@ -424,6 +453,14 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
     const badge_question_t *question = NULL;
 
     set_battery(s_ak_battery, snapshot);
+
+    // 换题、或者换了一条等待：正文滚回顶部。残留的偏移会让新题从中段开始显示，而那种
+    // 「一上来就是半句话」看起来像设备坏了。
+    if (ask != s_ak_body_ask || snapshot->question_index != s_ak_body_index) {
+        s_ak_body_ask = ask;
+        s_ak_body_index = snapshot->question_index;
+        lv_obj_scroll_to_y(s_ak_viewport, 0, LV_ANIM_OFF);
+    }
 
     if (questions) {
         if (snapshot->question_index < ask->question_count) {
@@ -536,6 +573,10 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
     // 而这块屏一行放不下「第几题 + 换题 + 提交」三件事。
     if (snapshot->notice != NULL) {
         lv_label_set_text(s_ak_footer, snapshot->notice);
+    } else if (ask_body_can_scroll(1)) {
+        // 提示跟着**手势此刻的作用**走：还能往下翻时，长按上/下是翻屏而不是换题，
+        // 所以这里说翻屏；翻到底之后下面那些分支会自己把换题/提交的话接回来。
+        lv_label_set_text(s_ak_footer, "长按翻屏看全文");
     } else if (questions && ask->question_count > 1U) {
         lv_label_set_text(s_ak_footer,
                           (question != NULL && question->multi_select)
@@ -573,10 +614,24 @@ void badge_ui_render(const badge_ui_snapshot_t *snapshot)
     }
 }
 
-void badge_ui_scroll(int lines)
+bool badge_ui_scroll(int direction)
 {
-    (void)lines;
-    // 待答屏的内容目前靠换行整段放下（正文框 100px 高，够放常见的问题与命令）。
-    // 真正需要滚动的是异常长的一屏，而那已经超出「一眼能扫完」的范围——与其做半个
-    // 滚动，不如把这件事留给屏幕上的提示：长内容最终还是要在电脑上看。
+    const bool down = direction >= 0;
+    int32_t page;
+    int32_t target;
+
+    // 先问边界的账，而不是「翻完看看位置变了没」：那样写会把一次真的翻动判成「没翻」，
+    // 于是按键被当成换题。
+    if (!ask_body_can_scroll(down ? 1 : -1)) {
+        return false;
+    }
+    // 一次一屏（视口高度 = 3 行）：一次一行读长题面太磨人，而这屏上唯一的输入就是长按
+    // ——每一次长按都得值回票价。
+    page = lv_obj_get_height(s_ak_viewport);
+    // 走 scroll_to_y 而不是 scroll_by，方向按 LVGL 自己的约定来（它自己的按键处理就是
+    // 「往下 = 在当前 scroll_y 上加」）：公开的 scroll_y 越大越往下读。别用 scroll_by——
+    // 那个走 raw 路径，符号是反的，而且不替我们夹边界（一次翻过内容底部会露出空白）。
+    target = lv_obj_get_scroll_y(s_ak_viewport) + (down ? page : -page);
+    lv_obj_scroll_to_y(s_ak_viewport, target, LV_ANIM_OFF);
+    return true;
 }

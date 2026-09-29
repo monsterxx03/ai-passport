@@ -22,6 +22,10 @@ typedef struct _lv_font_t lv_font_t;
 // 界面和启动自检都要用它，而一个藏在别的编译单元里的 extern 只有那个文件看得见。
 extern const lv_font_t badge_font_16;
 
+// 生成的图标字体（同一个脚本）：顶栏那两枚传输图标（USB / 蓝牙）。它们是图标字体的
+// 私有区字形（U+F287 / U+F293）——那两个 logo 在 Unicode 里没有码位，所以只能这样来。
+extern const lv_font_t badge_font_icon_16;
+
 typedef enum {
     BADGE_UI_STATUS = 0, // 平时：谁在跑、跑到哪一步
     BADGE_UI_ASK,        // 有事等你：权限确认，或模型提的问题
@@ -93,5 +97,11 @@ void badge_ui_init(void);
 // badge_ui_render 按快照刷新当前屏。持锁调用；调用方负责只在快照变化后调用它。
 void badge_ui_render(const badge_ui_snapshot_t *snapshot);
 
-// badge_ui_scroll 在待答屏上滚动长内容（正文/选项超出屏幕时）。
-void badge_ui_scroll(int lines);
+// badge_ui_scroll 在待答屏上翻动超屏的正文，返回「这次真的翻了吗」。
+//
+// 返回值是给按键路径用的：长按上/下先问这里一句——翻了就吞掉这次按键；没翻（正文放
+// 得下，或者已经翻到那一头）才交给状态机去换题。判据放在界面里，是因为「放不放得下」
+// 是布局事实（LVGL 自己量得最准），而状态机是纯逻辑、只管按键的语义。
+//
+// direction > 0 往下读（正文往上滑，露出后面的内容），< 0 往回读。持锁调用。
+bool badge_ui_scroll(int direction);

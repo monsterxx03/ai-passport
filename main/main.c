@@ -64,6 +64,9 @@ static const char *TAG = "badge";
 // 「忘记那台电脑」要点两次：第一次只是上膛（屏幕上说一句），第二次才真的忘掉。
 // 这个窗口过后自动退膛——一个停留在「待确认」状态的设备比误触更糟。
 #define BADGE_FORGET_CONFIRM_MS 6000U
+// 按键路径等 LVGL 锁的上限。滚动要动 LVGL 对象，而锁通常只被一帧渲染短暂占着；
+// 等不到时这次按键就不生效（再按一次即可）——比让一次「滚动」意外变成「换题」好。
+#define BADGE_UI_LOCK_MS 100U
 
 // 正常亮度。空闲熄屏就是把它降到 0（见 badge_power）——省电靠的是背光，不是让
 // 芯片睡下去：睡下去就听不到主机递过来的 ask，而那是这块设备唯一的存在理由。
@@ -360,6 +363,26 @@ static void handle_key(const badge_key_event_t *event)
             handle_forget(now_ms());
         }
         return;
+    }
+    // 长按上/下：正文装不下时先翻正文，翻到那一头才轮到状态机（换题）。判据在界面里
+    // （「放不放得下」是布局事实），这里只负责把这次按键的归属问清楚。
+    if (s_state.ask_count > 0U &&
+        (event->key == BADGE_KEY_PREV || event->key == BADGE_KEY_NEXT)) {
+        const int direction = (event->key == BADGE_KEY_NEXT) ? 1 : -1;
+        bool scrolled = false;
+
+        if (!bsp_lvgl_lock(BADGE_UI_LOCK_MS)) {
+            ESP_LOGW(TAG, "lvgl lock timeout — 这次按键跳过");
+            return;
+        }
+        scrolled = badge_ui_scroll(direction);
+        bsp_lvgl_unlock();
+        // 留痕：这一次长按归谁（翻屏还是换题）。排查时这是第一个要回答的问题——
+        // 「按键到了、界面说翻不动」和「按键根本没到」在屏幕上看起来一模一样。
+        ESP_LOGI(TAG, "长按翻屏: dir=%d scrolled=%d", direction, (int)scrolled);
+        if (scrolled) {
+            return;
+        }
     }
     if (!badge_state_key(&s_state, event->key, payload, sizeof(payload), &length)) {
         return;
