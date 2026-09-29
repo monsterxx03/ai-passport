@@ -499,8 +499,18 @@ static void badge_task(void *argument)
         if (badge_state_tick(&s_state, BADGE_APP_TICK_MS)) {
             dirty = true;
         }
-        // 屏幕亮灭。touched 只在真有事件时置位（按键、链路状态变化），所以空闲计时
-        // 不会被每 100ms 一次的 tick 自己清零；待答项则交给下面的 has_pending_ask。
+        // 提示音：主机发来的一条 alert（有事等你 / 回合完成）。判定全在主机侧，这里只把
+        // 那一次性的标志变成声音——响哪一种由状态机记着。放在电源判定**之前**：听见了
+        // 却看不见，用户还得再按一下才看得到状态，那一声就白响了。
+        if (s_state.alert_pending != BADGE_ALERT_NONE) {
+            const badge_alert_kind_t kind = s_state.alert_pending;
+
+            s_state.alert_pending = BADGE_ALERT_NONE;
+            badge_sound_play(kind);
+            touched = true;
+        }
+        // 屏幕亮灭。touched 只在真有事件时置位（按键、链路状态变化、提示音），所以空闲
+        // 计时不会被每 100ms 一次的 tick 自己清零；待答项则交给下面的 has_pending_ask。
         {
             bool flip = false;
             // 配对进行中也要保持亮屏：那 6 位码是用户此刻唯一要看的东西，屏幕在
@@ -520,12 +530,6 @@ static void badge_task(void *argument)
                 // 只是在烧电），亮起来时把选中那一行重新滚动起来。
                 dirty = true;
             }
-        }
-        // 提示音：一条「该响一声」的新等待到了。判定是状态机做的（纯逻辑、有主机测试），
-        // 这里只消费那一次性的标志并把它变成声音——响不响不在这里判断。
-        if (s_state.alert_pending) {
-            s_state.alert_pending = false;
-            badge_sound_play();
         }
         if (dirty) {
             render();

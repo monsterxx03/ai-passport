@@ -39,16 +39,6 @@ static unsigned long take_ulong(const bjson_val_t *obj, const char *key)
     return number < 0L ? 0UL : (unsigned long)number;
 }
 
-static bool take_bool(const bjson_val_t *obj, const char *key)
-{
-    bjson_val_t value;
-
-    if (!bjson_obj_get(obj, key, &value)) {
-        return false; // 缺字段 = 关（老主机不带这个字段）
-    }
-    return bjson_bool(&value, false);
-}
-
 static void take_options(const bjson_val_t *owner, badge_option_t *options, size_t *count,
                          size_t max, size_t *total)
 {
@@ -194,9 +184,6 @@ static bool parse_ask(const bjson_val_t *root, badge_msg_t *out)
     }
     (void)take_string(root, "title", out->title, sizeof(out->title));
     (void)take_string(root, "session", out->session, sizeof(out->session));
-    // 主机说这条等待值得响一声：它知道自己在不在前台、用户正在看哪个会话（见 tachi
-    // 的 registerAsk）。设备不判断这件事——它只有这两条信息里的零条。
-    out->alert = take_bool(root, "alert");
 
     if (strcmp(kind, "ask_user") == 0) {
         out->ask_kind = BADGE_ASK_QUESTIONS;
@@ -257,6 +244,25 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
         // 连接上再也等不到答案了。设备收到就把队列清空，等主机随后的全量重发。
         out->kind = BADGE_MSG_RESET;
         return true;
+    }
+    if (strcmp(kind, "alert") == 0) {
+        // 响一声。kind 决定放哪段音频（见 badge_sound）；不认识的 kind 直接丢掉——
+        // 放错一段声音比不响更让人困惑。
+        char which[BADGE_META_MAX];
+
+        which[0] = '\0';
+        (void)take_string(&root, "kind", which, sizeof(which));
+        if (strcmp(which, "ask") == 0) {
+            out->kind = BADGE_MSG_ALERT;
+            out->alert_kind = BADGE_ALERT_ASK;
+            return true;
+        }
+        if (strcmp(which, "done") == 0) {
+            out->kind = BADGE_MSG_ALERT;
+            out->alert_kind = BADGE_ALERT_DONE;
+            return true;
+        }
+        return false;
     }
     return false; // 不认识的消息类型：丢掉
 }

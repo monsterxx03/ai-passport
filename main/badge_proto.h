@@ -58,7 +58,16 @@ typedef enum {
     BADGE_MSG_ASK_GONE, // 某条待答项已被撤销
     BADGE_MSG_ERROR,    // 主机侧拒绝了我们的回答
     BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
+    BADGE_MSG_ALERT,    // 响一声：有事等你，或者一个回合跑完了
 } badge_msg_kind_t;
+
+// 提示音的两种含义。设备为它们放**不同的音频**——「有事找你」和「好了」是两件事，
+// 人不用看屏幕就能从声音上分开（见 badge_sound）。
+typedef enum {
+    BADGE_ALERT_NONE = 0, // 没有（还是被处理掉了）
+    BADGE_ALERT_ASK,      // 出现了一条等你回答的等待（权限确认 / 提问）
+    BADGE_ALERT_DONE,     // 一个回合跑完了
+} badge_alert_kind_t;
 
 typedef enum {
     BADGE_ASK_PERMISSION = 0, // 一条命令要放行：选项是允许/拒绝
@@ -109,9 +118,6 @@ typedef struct {
     unsigned long ref; // 本次连接内的行号，回答时原样带回
     char session[BADGE_TEXT_MAX]; // 哪个会话在等：状态屏据此把那一行挑出来显示
     badge_ask_kind_t ask_kind;
-    // alert 是主机对这条等待的判断：「值得响一声」（它不在前台，或者等的不是当前
-    // 活跃会话——见 tachi 的 registerAsk）。设备只照做，不自己判断这件事。
-    bool alert;
     char title[BADGE_TITLE_MAX];
     char body[BADGE_BODY_MAX]; // 权限：预览文本；提问：不用
     size_t option_count;
@@ -125,6 +131,9 @@ typedef struct {
 
     // BADGE_MSG_ERROR
     char message[BADGE_DETAIL_MAX];
+
+    // BADGE_MSG_ALERT：放哪一段音频（BADGE_ALERT_NONE 表示这条消息不认识，忽略）
+    badge_alert_kind_t alert_kind;
 } badge_msg_t;
 
 // badge_proto_parse 解析一行（`@@` 前缀与行尾已由传输层剥掉）。

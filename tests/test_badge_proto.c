@@ -344,19 +344,21 @@ static void test_encoding_refuses_a_partial_message(void)
     assert(buffer[0] == '\0');
 }
 
-// 「该响一声」是主机发来的一个可选字段：它才知道自己在不在前台、用户正在看哪个会话。
-// 老主机（或老版本的协议）不带这个字段 —— 那就**不响**，设备不替主机猜。
-static void test_alert_flag(void)
+// 提示音是一条**独立的**消息，而不是挂在 ask 上的字段：「有事等你」与「回合完成」是两件
+// 事，而后者根本不属于任何一条 ask——挂在 ask 上就表达不了它。
+static void test_alert_message(void)
 {
-    assert(parse("{\"t\":\"ask\",\"seq\":9,\"ref\":9,\"kind\":\"permission\",\"session\":\"s1\","
-                 "\"alert\":true,\"body\":\"$ ls\","
-                 "\"options\":[{\"label\":\"允许\",\"value\":\"allow_once\"}]}"));
-    assert(message.alert);
+    assert(parse("{\"t\":\"alert\",\"seq\":9,\"kind\":\"ask\"}"));
+    assert(message.kind == BADGE_MSG_ALERT);
+    assert(message.alert_kind == BADGE_ALERT_ASK);
 
-    assert(parse("{\"t\":\"ask\",\"seq\":10,\"ref\":10,\"kind\":\"permission\",\"session\":\"s1\","
-                 "\"body\":\"$ ls\","
-                 "\"options\":[{\"label\":\"允许\",\"value\":\"allow_once\"}]}"));
-    assert(!message.alert);
+    assert(parse("{\"t\":\"alert\",\"seq\":10,\"kind\":\"done\"}"));
+    assert(message.kind == BADGE_MSG_ALERT);
+    assert(message.alert_kind == BADGE_ALERT_DONE);
+
+    // 不认识的 kind / 没有 kind：丢掉。放错一段声音比不响更让人困惑。
+    assert(!parse("{\"t\":\"alert\",\"seq\":11,\"kind\":\"whatever\"}"));
+    assert(!parse("{\"t\":\"alert\",\"seq\":12}"));
 }
 
 int main(void)
@@ -378,7 +380,7 @@ int main(void)
     test_encoding();
     test_question_answer_round_trip();
     test_encoding_refuses_a_partial_message();
-    test_alert_flag();
+    test_alert_message();
     printf("test_badge_proto: OK\n");
     return 0;
 }

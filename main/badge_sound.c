@@ -26,33 +26,56 @@ static const char *TAG = "badge_sound";
 
 static QueueHandle_t s_requests;
 
+// clip_for 返回这一种提示音的 PCM 与长度。
+//
+// 一处映射，而不是一张「kind → 数组」的表：那张表要么把长度也塞进静态初始化（`const
+// size_t` 在 C 里不是常量表达式，塞不进去），要么就得多一份并行的长度表——那种重复
+// 迟早会让某一声放错长度。
+static const int16_t *clip_for(badge_alert_kind_t kind, size_t *samples)
+{
+    switch (kind) {
+    case BADGE_ALERT_DONE:
+        *samples = badge_sound_done_samples;
+        return badge_sound_done_pcm;
+    case BADGE_ALERT_ASK:
+    default:
+        *samples = badge_sound_ask_samples;
+        return badge_sound_ask_pcm;
+    }
+}
+
 static void sound_task(void *argument)
 {
-    size_t written = 0;
-
     (void)argument;
     for (;;) {
-        uint8_t request = 0;
+        badge_alert_kind_t kind = BADGE_ALERT_NONE;
+        size_t samples = 0;
+        const int16_t *pcm;
+        size_t written;
 
-        if (xQueueReceive(s_requests, &request, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(s_requests, &kind, portMAX_DELAY) != pdTRUE) {
             continue;
         }
+        if (kind == BADGE_ALERT_NONE) {
+            continue;
+        }
+        pcm = clip_for(kind, &samples);
         // codec 平时睡着：这一声的代价是「唤醒 → 写完 → 再睡」，而平时它不占电流。
         if (bsp_audio_wake() != ESP_OK) {
             ESP_LOGW(TAG, "codec 唤醒失败，这一声跳过");
             continue;
         }
         // 留痕：排查「怎么没响」时，这一行是「试过了」与「压根没到」的唯一分界。
-        ESP_LOGI(TAG, "响一声（%u 采样）", (unsigned)badge_sound_samples);
-        for (written = 0; written < badge_sound_samples; written += SOUND_CHUNK_SAMPLES) {
-            size_t chunk = badge_sound_samples - written;
+        ESP_LOGI(TAG, "响一声（%s，%u 采样）", kind == BADGE_ALERT_DONE ? "done" : "ask",
+                 (unsigned)samples);
+        for (written = 0; written < samples; written += SOUND_CHUNK_SAMPLES) {
+            size_t chunk = samples - written;
 
             if (chunk > SOUND_CHUNK_SAMPLES) {
                 chunk = SOUND_CHUNK_SAMPLES;
             }
-            if (bsp_audio_write(&badge_sound_pcm[written], chunk * sizeof(int16_t)) != ESP_OK) {
-                ESP_LOGW(TAG, "播放失败（已写 %u/%u 采样）",
-                         (unsigned)written, (unsigned)badge_sound_samples);
+            if (bsp_audio_write(&pcm[written], chunk * sizeof(int16_t)) != ESP_OK) {
+                ESP_LOGW(TAG, "播放失败（已写 %u/%u 采样）", (unsigned)written, (unsigned)samples);
                 break;
             }
         }
@@ -79,19 +102,19 @@ void badge_sound_init(void)
         ESP_LOGW(TAG, "codec 没能睡着（能响，只是平时多耗一点）");
     }
 
-    s_requests = xQueueCreate(1, sizeof(uint8_t));
+    s_requests = xQueueCreate(1, sizeof(badge_alert_kind_t));
     if (s_requests == NULL || xTaskCreate(sound_task, "badge_sound", 4096, NULL, 4, NULL) != pdPASS) {
         ESP_LOGW(TAG, "播放任务未能创建");
     }
 }
 
-void badge_sound_play(void)
+void badge_sound_play(badge_alert_kind_t kind)
 {
-    const uint8_t request = 1;
-
-    if (s_requests == NULL) {
+    if (s_requests == NULL || kind == BADGE_ALERT_NONE) {
         return;
     }
-    // 不等待：队列里已经有一声在路上就够了。
-    (void)xQueueSend(s_requests, &request, 0);
+    // 覆盖队列里那一格：连着两声的意义是零，而以最后那种为准（和状态机同一条约定）。
+    if (xQueueOverwrite(s_requests, &kind) != pdTRUE) {
+        ESP_LOGW(TAG, "提示音请求未能入队");
+    }
 }

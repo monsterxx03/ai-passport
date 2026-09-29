@@ -598,35 +598,32 @@ static void test_ui_prefers_the_session_that_is_waiting(void)
     assert(strcmp(snapshot.state_label, "提问") == 0);
 }
 
-// 「该响一声」是**新出现的**等待才有的待遇。
+// 提示音的两种含义各记一份，而且**以最后那条为准**：连着两声的意义是零，而漏掉最后那条
+// 才是真会让人错过东西。
 //
-// 同一条 ask 会被主机每 10 秒的心跳重发一遍——跟着重发走，提示音就成了每 10 秒响一次，
-// 那比不响更糟（它在人面前把「有事等你」变成背景噪音）。所以标志只在入队那条路径上
-// 置位，而且由调用方消费一次。
-static void test_alert_fires_once_per_new_ask(void)
+// 一条 ask 本身不再触发声音——那件事现在由 alert 消息说（见 test_alert_message）。
+static void test_alert_kinds_reach_the_state(void)
 {
     badge_msg_t message;
 
     badge_state_init(&state);
     fill_permission(&message, 1UL);
-    message.alert = true;
     assert(badge_state_apply(&state, &message));
-    assert(state.alert_pending);
+    assert(state.alert_pending == BADGE_ALERT_NONE);
 
-    state.alert_pending = false; // 调用方消费掉（main 的循环就是这么做的）
-    assert(badge_state_apply(&state, &message)); // 心跳重发同一条
-    assert(!state.alert_pending);
-
-    fill_permission(&message, 2UL); // 下一条新的等待：再响一次
-    message.alert = true;
+    memset(&message, 0, sizeof(message));
+    message.kind = BADGE_MSG_ALERT;
+    message.alert_kind = BADGE_ALERT_ASK;
     assert(badge_state_apply(&state, &message));
-    assert(state.alert_pending);
+    assert(state.alert_pending == BADGE_ALERT_ASK);
 
-    // 主机没标 alert 的（你正看着那个会话，或者就是当前活跃会话）永远不响。
-    state.alert_pending = false;
-    fill_permission(&message, 3UL);
+    message.alert_kind = BADGE_ALERT_DONE; // 还没放掉就又来一条：盖掉
     assert(badge_state_apply(&state, &message));
-    assert(!state.alert_pending);
+    assert(state.alert_pending == BADGE_ALERT_DONE);
+
+    state.alert_pending = BADGE_ALERT_NONE; // 调用方消费掉（main 的循环就是这么做的）
+    assert(badge_state_apply(&state, &message));
+    assert(state.alert_pending == BADGE_ALERT_DONE);
 }
 
 int main(void)
@@ -650,7 +647,7 @@ int main(void)
     test_queue_is_bounded();
     test_keys_do_nothing_without_an_ask();
     test_ui_prefers_the_session_that_is_waiting();
-    test_alert_fires_once_per_new_ask();
+    test_alert_kinds_reach_the_state();
     printf("test_badge_state: OK\n");
     return 0;
 }

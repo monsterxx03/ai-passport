@@ -124,11 +124,6 @@ static bool push_ask(badge_state_t *state, const badge_msg_t *message)
         reset_cursor(state);
     }
     disclose_dropped_questions(state, message);
-    // 「该响一声」只在这条路径（**新出现**的等待）上置位：同一条 ask 会被主机的心跳
-    // 每 10 秒重发一次，跟着重发走就成了每 10 秒响一次。
-    if (message->alert) {
-        state->alert_pending = true;
-    }
     return true;
 }
 
@@ -167,6 +162,14 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
         // 主机的拒绝要给用户看见：不然按下去没反应，看起来像是设备坏了。
         set_notice(state, message->message[0] != '\0' ? message->message : "主机拒绝了这次回答",
                    5000U);
+        return true;
+    case BADGE_MSG_ALERT:
+        // 主机说「响一声」：它知道自己在不在前台、用户正在看哪个会话，而这块屏上
+        // 一条信息都没有。这里只记下是哪一种，放音频是调用方的事（见 badge_sound）。
+        //
+        // 来的比放掉得快时，后面那条盖掉前面那条：连着两声的意义是零，而漏掉最后
+        // 那条才是真会让人错过东西。
+        state->alert_pending = message->alert_kind;
         return true;
     default:
         return false;
