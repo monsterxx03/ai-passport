@@ -290,9 +290,10 @@ static void render_status(const badge_ui_snapshot_t *snapshot)
         lv_label_set_text(s_st_detail, snapshot->state_detail);
     }
 
-    if (snapshot->session_count > 1U) {
+    // 按主机报的总数算，不按这里放得下的那几个：放不下的会话同样是「另有」。
+    if (snapshot->session_total > 1U) {
         (void)snprintf(footer, sizeof(footer), "另有 %u 个会话在跑",
-                       (unsigned)(snapshot->session_count - 1U));
+                       (unsigned)(snapshot->session_total - 1U));
     } else {
         footer[0] = '\0';
     }
@@ -340,11 +341,13 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
         lv_label_set_text(s_ak_body, ask->body);
     }
 
-    // 无选项的自由输入题：三键打不了字，那就把这件事说清楚，而不是留一块空白
-    // 让人以为设备卡住了。
-    if (questions && question != NULL && question->option_count == 0U) {
+    // 这一屏答不了的情况都要说出来，而不是留一块空白让人以为设备卡住了：
+    //   - 无选项的自由输入题：三键打不了字；
+    //   - 一道题都上不了屏（题面长到装不下，见 badge_proto 的 questions_total）。
+    if (questions && (question == NULL || question->option_count == 0U)) {
         lv_obj_remove_flag(s_ak_options[0], LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(s_ak_labels[0], "需要在电脑上回答");
+        lv_label_set_text(s_ak_labels[0],
+                          question != NULL ? "需要在电脑上回答" : "这题要到电脑上答");
         marquee(s_ak_labels[0], false);
         lv_obj_set_style_bg_opa(s_ak_options[0], LV_OPA_TRANSP, 0);
         lv_obj_set_style_text_color(s_ak_labels[0], lv_color_hex(COL_ACCENT), 0);
@@ -353,7 +356,8 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
             // 藏起来的行也要退出跑马灯：看不见的动画照样让 LVGL 一直重绘。
             marquee(s_ak_labels[i], false);
         }
-        lv_label_set_text(s_ak_footer, "这题要用文字回答");
+        lv_label_set_text(s_ak_footer, question != NULL ? "这题要用文字回答"
+                                                        : "题面太长，电脑上看全文");
         return;
     }
 
@@ -393,6 +397,28 @@ static void render_ask(const badge_ui_snapshot_t *snapshot)
         // 只有选中的那一行滚：放得下时 LVGL 不启动动画，短选项不受影响。
         // 熄屏时必须停掉——屏幕黑着还在滚的动画纯属烧电。
         marquee(s_ak_labels[i], i == snapshot->selection && snapshot->screen_on);
+    }
+
+    // 放不下的选项：**留一行说真话**。解析层已经保证「有溢出时 option_count ≤ 上限-1」，
+    // 所以这里一定有空位；说得含糊（"更多…"）没有意义，用户要知道少了几个。
+    {
+        size_t shown = questions
+                           ? (question != NULL ? question->option_count : 0U)
+                           : ask->option_count;
+        size_t total = questions
+                           ? (question != NULL ? question->options_total : 0U)
+                           : ask->options_total;
+
+        if (total > shown && shown < BADGE_MAX_OPTIONS) {
+            char note[48];
+
+            (void)snprintf(note, sizeof(note), "…还有 %u 项在电脑上", (unsigned)(total - shown));
+            lv_obj_remove_flag(s_ak_options[shown], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_style_bg_opa(s_ak_options[shown], LV_OPA_TRANSP, 0);
+            lv_label_set_text(s_ak_labels[shown], note);
+            marquee(s_ak_labels[shown], false);
+            lv_obj_set_style_text_color(s_ak_labels[shown], lv_color_hex(COL_MUTED), 0);
+        }
     }
 
     // 底栏：先报按键，再报其它。题号不在这里重复——标题写成「(1/2) 主题」，

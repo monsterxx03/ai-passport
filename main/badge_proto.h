@@ -26,13 +26,25 @@
 #define BADGE_QUESTION_MAX 384
 #define BADGE_FIRMWARE_MAX 16
 
-// 一张屏上能放下的量。超出的部分被丢掉——这是屏幕的边界，不是解析的失败。
+// 一张屏上能放下的量。超出的部分**不再静默丢掉**（见 main/badge_proto.h 的
+// *_total 字段）：屏幕上会说一句「还有 N 项在电脑上」，因为看不见的选项等于不存在，
+// 而用户无从知道少的是什么。
 //
 // 选项上限是 5 而不是更多：240x320 的屏上，正文框和右上角电量占掉之后，选项区
-// 恰好放得下 5 行 28px。多出来的选项在屏幕上放不下，收下它只会让界面说谎。
+// 恰好放得下 5 行 22px（行距 24px）。多出来的选项在屏幕上放不下，所以真话要占一行
+// ——需要报「还有 N 项」时，只显示 4 项 + 那一行；否则显示 5 项，什么都不用说。
 #define BADGE_MAX_SESSIONS 4
 #define BADGE_MAX_OPTIONS 5
-#define BADGE_MAX_QUESTIONS 3
+// 4 题是工具 schema 对模型宣称的上限（agent/tools/askuser.go 的 "1-4 questions"），
+// 而它只是一句描述、没有强制——所以设备这边对齐到 4，多出来的仍然由那句提示兜住。
+// 内存不是理由：一道题 1104 字节，整个 badge_msg_t 5576 字节，加一题多约 8KB 静态区。
+#define BADGE_MAX_QUESTIONS 4
+
+// 回传答案的缓冲上限。答案的**键是题面全文**（协议约定），所以最坏情况是
+// 每道题的题面 + 它的选项标签：4 道题 × (384 + 64) 再加上 JSON 骨架与转义余量。
+// 这个数不是「够用就行」——装不下的后果是按下确定之后什么都不发（见
+// badge_state 的 submit_questions），所以调用方的缓冲必须按它开。
+#define BADGE_ANSWER_MAX (BADGE_MAX_QUESTIONS * (BADGE_QUESTION_MAX + BADGE_TITLE_MAX + 16U) + 64U)
 
 // 权限回答的三个机器值，与 tachi 侧同一套（desktop/link/link.go）。
 #define BADGE_DECISION_ALLOW_ONCE "allow_once"
@@ -74,6 +86,10 @@ typedef struct {
     bool multi_select;
     size_t option_count;
     badge_option_t options[BADGE_MAX_OPTIONS];
+    // options_total 是主机**发来的**项数，option_count 是屏幕上放得下的。
+    // 两者不等就要在屏幕上说出来（「还有 N 项在电脑上」）——看不见的选项等于不存在，
+    // 而用户无从知道少的是什么。
+    size_t options_total;
 } badge_question_t;
 
 // badge_msg_t 是一条解析好的消息。它把一行里出现过的字段都摊平在一个结构里
@@ -87,6 +103,7 @@ typedef struct {
     // BADGE_MSG_STATE
     size_t session_count;
     badge_session_t sessions[BADGE_MAX_SESSIONS];
+    size_t sessions_total; // 主机报了多少（见 badge_question_t.options_total）
 
     // BADGE_MSG_ASK
     unsigned long ref; // 本次连接内的行号，回答时原样带回
@@ -96,8 +113,12 @@ typedef struct {
     char body[BADGE_BODY_MAX]; // 权限：预览文本；提问：不用
     size_t option_count;
     badge_option_t options[BADGE_MAX_OPTIONS];
+    size_t options_total;
     size_t question_count;
     badge_question_t questions[BADGE_MAX_QUESTIONS];
+    // 主机发来的题数。比 question_count 多，就说明有些题上不了屏（超出上限，或者
+    // 题面长到装不下——题面是回传答案的键，截断了就答不上，所以那种题整道不显示）。
+    size_t questions_total;
 
     // BADGE_MSG_ERROR
     char message[BADGE_DETAIL_MAX];

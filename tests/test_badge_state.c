@@ -368,6 +368,156 @@ static void test_reset_drops_every_ask(void)
     assert(snapshot.selection == 0U);
 }
 
+// 有些题上不了屏时必须说出来：用户答完眼前这几题就提交，而模型会收到一个少了几条的
+// 答复，谁都不知道少了什么。这条提示用的是「一次性提示」那套（几秒后自己消失）。
+static void test_dropped_questions_are_disclosed(void)
+{
+    static const char overflow[] =
+        "{\"t\":\"ask\",\"seq\":7,\"ref\":7,\"kind\":\"ask_user\",\"title\":\"方向\","
+        "\"session\":\"s1\",\"questions\":["
+        "{\"header\":\"一\",\"question\":\"第一题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"二\",\"question\":\"第二题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"三\",\"question\":\"第三题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"四\",\"question\":\"第四题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"五\",\"question\":\"第五题？\",\"options\":[{\"label\":\"A\"}]}]}";
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    assert(badge_proto_parse(overflow, strlen(overflow), &message));
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice != NULL);
+    assert(strcmp(snapshot.notice, "还有 1 题没上屏，到电脑上答") == 0);
+
+    // 放得下的不该有这条提示：它是「你看的不全」的信号，不是装饰。
+    badge_state_init(&state);
+    fill_questions(&message, 8UL, false, 3U);
+    assert(badge_state_apply(&state, &message));
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.notice == NULL);
+}
+
+// 会话总数要原样带给界面：底栏按主机报的数说「另有 N 个会话在跑」，而不是按屏幕上
+// 放得下的那几个——放不下的同样是「另有」。
+static void test_session_total_reaches_the_ui(void)
+{
+    static const char line[] =
+        "{\"t\":\"state\",\"seq\":5,\"sessions\":["
+        "{\"id\":\"s1\",\"title\":\"一\",\"label\":\"执行\"},"
+        "{\"id\":\"s2\",\"title\":\"二\"},{\"id\":\"s3\",\"title\":\"三\"},"
+        "{\"id\":\"s4\",\"title\":\"四\"},{\"id\":\"s5\",\"title\":\"五\"},"
+        "{\"id\":\"s6\",\"title\":\"六\"}]}";
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+
+    badge_state_init(&state);
+    assert(badge_proto_parse(line, strlen(line), &message));
+    assert(badge_state_apply(&state, &message));
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.session_count == BADGE_MAX_SESSIONS); // 放得下的
+    assert(snapshot.session_total == 6U);                 // 主机报的
+}
+
+// 答案缓冲够不够，决定的不是「好看」而是**按下去有没有反应**：答案的键是题面全文，
+// 4 道稍长的题就能超过旧的 512 字节缓冲，而那时设备会静默地什么都不发。
+static void build_long_questions(badge_msg_t *message, size_t count, size_t text_len)
+{
+    size_t i;
+    size_t j;
+
+    memset(message, 0, sizeof(*message));
+    message->kind = BADGE_MSG_ASK;
+    message->ref = 9UL;
+    message->ask_kind = BADGE_ASK_QUESTIONS;
+    (void)strcpy(message->session, "s1");
+    (void)strcpy(message->title, "方向");
+    message->question_count = count;
+    message->questions_total = count;
+    for (i = 0; i < count; ++i) {
+        badge_question_t *question = &message->questions[i];
+
+        for (j = 0; j < text_len && j + 1U < sizeof(question->question); ++j) {
+            question->question[j] = 'q';
+        }
+        question->question[j] = '\0';
+        question->option_count = 1U;
+        (void)strcpy(question->options[0].label, "A");
+        (void)strcpy(question->options[0].value, "A");
+    }
+}
+
+static void test_a_long_four_question_answer_needs_the_bigger_buffer(void)
+{
+    badge_msg_t message;
+    char answer[BADGE_ANSWER_MAX];
+    size_t length = 0;
+    size_t i;
+
+    build_long_questions(&message, BADGE_MAX_QUESTIONS, 300U);
+    badge_state_init(&state);
+    assert(badge_state_apply(&state, &message));
+
+    // 单选：每一题的确定都是「选中并前进」，最后一题才提交。
+    for (i = 0; i < BADGE_MAX_QUESTIONS; ++i) {
+        const bool sent = badge_state_key(&state, BADGE_KEY_OK, answer, sizeof(answer), &length);
+
+        assert(sent == (i + 1U == BADGE_MAX_QUESTIONS));
+    }
+    assert(length > 512U); // 旧的 512 字节缓冲装不下——那正是它静默失败的那个场景
+    assert(strstr(answer, "\"t\":\"answer\"") != NULL);
+    assert(state.notice[0] == '\0'); // 编码成功就不该有那条提示
+}
+
+// 装不下时必须说一句：屏幕上「按了没反应」是这块板上最贵的一类故障，它连日志都没有。
+static void test_unencodable_answer_is_disclosed(void)
+{
+    badge_msg_t message;
+    char tiny[64];
+    size_t length = 0;
+
+    fill_questions(&message, 11UL, false, 2U);
+    badge_state_init(&state);
+    assert(badge_state_apply(&state, &message));
+
+    (void)badge_state_key(&state, BADGE_KEY_OK, tiny, sizeof(tiny), &length); // 第一题：只前进
+    assert(!badge_state_key(&state, BADGE_KEY_OK, tiny, sizeof(tiny), &length));
+    assert(strcmp(state.notice, "答案装不下，到电脑上答") == 0);
+}
+
+// 一道题都显示不了（题面都太长）时，待答屏**仍然要立起来**：界面会写「这题要到电脑上答」。
+// 主机正等一个答案，而「有人在等你」必须看得见——看不见的等待等于没有等待。
+static void test_an_undisplayable_ask_still_raises_the_screen(void)
+{
+    char filler[BADGE_QUESTION_MAX + 32U];
+    char line[sizeof(filler) + 256U];
+    badge_msg_t message;
+    badge_ui_snapshot_t snapshot;
+    size_t i;
+
+    for (i = 0; i < sizeof(filler) - 1U; ++i) {
+        filler[i] = 'a';
+    }
+    filler[sizeof(filler) - 1U] = '\0';
+    (void)snprintf(line, sizeof(line),
+                   "{\"t\":\"ask\",\"seq\":9,\"ref\":9,\"kind\":\"ask_user\","
+                   "\"session\":\"s1\",\"title\":\"题面太长\","
+                   "\"questions\":[{\"question\":\"%s\",\"options\":[{\"label\":\"A\"}]}]}",
+                   filler);
+
+    badge_state_init(&state);
+    assert(badge_proto_parse(line, strlen(line), &message));
+    assert(badge_state_apply(&state, &message));
+    assert(state.ask_count == 1U);
+
+    badge_state_to_ui(&state, &snapshot);
+    assert(snapshot.view == BADGE_UI_ASK);
+    assert(snapshot.ask != NULL);
+    assert(snapshot.ask->question_count == 0U); // 一道都显示不了
+}
+
 // 主机拒绝了回答：屏幕上要看得见，否则按下去没反应像是设备坏了。
 static void test_error_sets_a_visible_notice(void)
 {
@@ -460,6 +610,11 @@ int main(void)
     test_multi_select_walks_between_questions();
     test_question_navigation_stops_at_the_ends();
     test_reset_drops_every_ask();
+    test_dropped_questions_are_disclosed();
+    test_session_total_reaches_the_ui();
+    test_a_long_four_question_answer_needs_the_bigger_buffer();
+    test_unencodable_answer_is_disclosed();
+    test_an_undisplayable_ask_still_raises_the_screen();
     test_error_sets_a_visible_notice();
     test_queue_is_bounded();
     test_keys_do_nothing_without_an_ask();

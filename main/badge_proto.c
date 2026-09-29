@@ -40,21 +40,25 @@ static unsigned long take_ulong(const bjson_val_t *obj, const char *key)
 }
 
 static void take_options(const bjson_val_t *owner, badge_option_t *options, size_t *count,
-                         size_t max)
+                         size_t max, size_t *total)
 {
     bjson_val_t array;
     size_t length;
+    size_t keep;
     size_t i;
 
     *count = 0;
+    *total = 0;
     if (!bjson_obj_get(owner, "options", &array) || array.kind != BJSON_ARRAY) {
         return;
     }
     length = bjson_arr_len(&array);
-    if (length > max) {
-        length = max;
-    }
-    for (i = 0; i < length; ++i) {
+    *total = length;
+
+    // 放不下时**留最后一行说真话**：屏幕上没有地方同时放「5 个选项」和「还有 N 项」，
+    // 而两者相比说谎更糟——用户看不到的选项就等于不存在，他无从知道少了什么。
+    keep = length > max ? max - 1U : length;
+    for (i = 0; i < length && *count < keep; ++i) {
         bjson_val_t item;
         badge_option_t *option = &options[*count];
 
@@ -86,6 +90,7 @@ static void take_questions(const bjson_val_t *root, badge_msg_t *out)
         return;
     }
     length = bjson_arr_len(&array);
+    out->questions_total = length;
     if (length > BADGE_MAX_QUESTIONS) {
         length = BADGE_MAX_QUESTIONS;
     }
@@ -108,7 +113,8 @@ static void take_questions(const bjson_val_t *root, badge_msg_t *out)
                 question->multi_select = bjson_bool(&multi, false);
             }
         }
-        take_options(&item, question->options, &question->option_count, BADGE_MAX_OPTIONS);
+        take_options(&item, question->options, &question->option_count, BADGE_MAX_OPTIONS,
+                     &question->options_total);
 
         // 题面被截断，或者压根没有题面：这道题答不了。它不是「少一个字段」——
         // 答案要靠题面全文当键，键错了模型会收到一个它不认识的答案。宁可不上屏，
@@ -135,6 +141,7 @@ static bool parse_state(const bjson_val_t *root, badge_msg_t *out)
         return true;
     }
     length = bjson_arr_len(&sessions);
+    out->sessions_total = length;
     if (length > BADGE_MAX_SESSIONS) {
         length = BADGE_MAX_SESSIONS;
     }
@@ -181,12 +188,15 @@ static bool parse_ask(const bjson_val_t *root, badge_msg_t *out)
     if (strcmp(kind, "ask_user") == 0) {
         out->ask_kind = BADGE_ASK_QUESTIONS;
         take_questions(root, out);
-        return out->question_count > 0U;
+        // 一道题都没上得了屏（题面都太长，或者压根没有题面）时**仍然收下**：主机那边
+        // 正等一个答案，而屏幕必须让「有人在等你」这件事看得见——看不到等待，这块设备
+        // 就不存在了。界面会把这种 ask 显示成「这题要到电脑上答」（见 badge_ui）。
+        return out->question_count > 0U || out->questions_total > 0U;
     }
 
     out->ask_kind = BADGE_ASK_PERMISSION;
     (void)take_string(root, "body", out->body, sizeof(out->body));
-    take_options(root, out->options, &out->option_count, BADGE_MAX_OPTIONS);
+    take_options(root, out->options, &out->option_count, BADGE_MAX_OPTIONS, &out->options_total);
     return out->option_count > 0U;
 }
 

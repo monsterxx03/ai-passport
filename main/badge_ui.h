@@ -42,6 +42,7 @@ typedef struct {
     char state_label[BADGE_META_MAX];
     char state_detail[BADGE_DETAIL_MAX];
     size_t session_count; // >1 时底栏说明还有别人
+    size_t session_total; // 主机报的会话数（≥ session_count）：底栏按它算，才不会少报
 
     // 待答屏。ask 为 NULL 时这一屏不该被显示（状态机不会切过来）。
     const badge_msg_t *ask;

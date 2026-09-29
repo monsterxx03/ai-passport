@@ -31,6 +31,9 @@ typedef struct {
     // 会话状态（状态屏）
     size_t session_count;
     badge_session_t sessions[BADGE_MAX_SESSIONS];
+    // 主机报了多少个会话（≥ session_count）。底栏的「另有 N 个会话在跑」按它算，
+    // 否则放不下的那些会让那句话少报。
+    size_t sessions_total;
 
     // 待答队列。一次只显示队首，答完出队。
     size_t ask_count;

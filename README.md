@@ -37,6 +37,14 @@ show the whole label while the others stay dotted. Only the selected row moves b
 scrolling at once are unreadable, and the animation stops when the screen blanks — text moving
 behind a dark screen only burns power.
 
+**What does not fit is said out loud** rather than quietly dropped. When one question carries more
+options than the screen holds, the spare row says how many are waiting on the computer instead of
+hiding them. When an ask carries more questions than the screen holds — or a question whose text is
+too long to display, which cannot be shortened because that text is the answer key — a one-shot
+notice says how many are missing: answering only what is on screen would hand the model an answer
+missing questions it never heard about. And an answer too large to encode says so, instead of
+leaving the button doing nothing.
+
 ## How it talks to the computer
 
 One USB serial line (the ESP32-C3's USB-Serial-JTAG), line-delimited JSON, every line prefixed

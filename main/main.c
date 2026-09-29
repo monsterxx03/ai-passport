@@ -266,7 +266,8 @@ static bool handle_line(const badge_line_t *line)
 
 static void handle_key(const badge_key_event_t *event)
 {
-    char payload[512];
+    // 静态而不是栈上：最坏情况接近 2KB，而任务栈只有 8192（见 BADGE_ANSWER_MAX）。
+    static char payload[BADGE_ANSWER_MAX];
     size_t length = 0;
 
     if (!badge_state_key(&s_state, event->key, payload, sizeof(payload), &length)) {

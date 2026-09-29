@@ -1,5 +1,6 @@
 #include "badge_state.h"
 
+#include <stdio.h>
 #include <string.h>
 
 static void set_notice(badge_state_t *state, const char *text, uint32_t duration_ms)
@@ -69,6 +70,28 @@ static bool drop_ask(badge_state_t *state, unsigned long ref)
     return false;
 }
 
+// disclose_dropped_questions 把「有些题上不了屏」说出来。
+//
+// 题上不了屏有两种原因，对用户来说是同一件事：题数超过设备能放的（工具给模型宣称的
+// 上限是 4），或者某道题的题面长到装不下——题面是回传答案的键，截断了模型会收到一个它
+// 不认识的答案，所以那种题整道不显示。两种都不该静默：用户答完眼前这几题就提交，而模型
+// 收到的是一个少了几条的答复，谁都不知道少了什么。
+//
+// 用一次性提示而不是常驻文案：它要说的是「剩下的到电脑上看」，而不是「等一下」。
+static void disclose_dropped_questions(badge_state_t *state, const badge_msg_t *message)
+{
+    char text[BADGE_DETAIL_MAX];
+    size_t dropped;
+
+    if (message->ask_kind != BADGE_ASK_QUESTIONS ||
+        message->questions_total <= message->question_count) {
+        return;
+    }
+    dropped = message->questions_total - message->question_count;
+    (void)snprintf(text, sizeof(text), "还有 %u 题没上屏，到电脑上答", (unsigned)dropped);
+    set_notice(state, text, 5000U);
+}
+
 static bool push_ask(badge_state_t *state, const badge_msg_t *message)
 {
     size_t i;
@@ -77,7 +100,16 @@ static bool push_ask(badge_state_t *state, const badge_msg_t *message)
     // ref 落到原位，而不是当成新的一项——否则屏幕上会凭空多出一条。
     for (i = 0; i < state->ask_count; ++i) {
         if (state->asks[i].ref == message->ref) {
+            // 主机每 10 秒的心跳会把这条 ask 重发一遍，所以「说一句」只在内容真的变了
+            // 时才做——否则那条一次性的提示会每 10 秒弹一次，几乎常驻在底栏上，把
+            // 按键提示挤掉。
+            const bool changed = (state->asks[i].questions_total != message->questions_total) ||
+                                 (state->asks[i].question_count != message->question_count);
+
             state->asks[i] = *message;
+            if (changed) {
+                disclose_dropped_questions(state, message);
+            }
             return true;
         }
     }
@@ -91,6 +123,7 @@ static bool push_ask(badge_state_t *state, const badge_msg_t *message)
     if (state->ask_count == 1U) {
         reset_cursor(state);
     }
+    disclose_dropped_questions(state, message);
     return true;
 }
 
@@ -102,10 +135,12 @@ bool badge_state_apply(badge_state_t *state, const badge_msg_t *message)
     switch (message->kind) {
     case BADGE_MSG_STATE: {
         bool changed = (state->session_count != message->session_count) ||
+                       (state->sessions_total != message->sessions_total) ||
                        (memcmp(state->sessions, message->sessions,
                                sizeof(state->sessions)) != 0);
 
         state->session_count = message->session_count;
+        state->sessions_total = message->sessions_total;
         memcpy(state->sessions, message->sessions, sizeof(state->sessions));
         return changed;
     }
@@ -193,7 +228,14 @@ static bool submit_questions(badge_state_t *state, const badge_msg_t *ask, char 
     }
 
     *out_length = badge_proto_answer_questions(out, cap, ask->ref, keys, values, count);
-    return *out_length > 0U;
+    if (*out_length == 0U) {
+        // 答案编码不出来（题面太长或太多，装不下调用方的缓冲）。必须说一句：屏幕上
+        // 「按了没反应」是这块板上最贵的一类故障，而它连日志都没有——用户只会以为
+        // 按键坏了，然后一遍遍地按。
+        set_notice(state, "答案装不下，到电脑上答", 5000U);
+        return false;
+    }
+    return true;
 }
 
 static bool key_permission(badge_state_t *state, const badge_msg_t *ask, badge_key_t key,
@@ -301,6 +343,7 @@ void badge_state_to_ui(const badge_state_t *state, badge_ui_snapshot_t *snapshot
     snapshot->connected = state->connected;
     snapshot->notice = state->notice[0] != '\0' ? state->notice : NULL;
     snapshot->session_count = state->session_count;
+    snapshot->session_total = state->sessions_total;
     snapshot->battery_percent = -1; // 由调用方用 BSP 读到的值覆盖
 
     // 正在等你的那个会话优先：状态屏上最有用的信息是「谁需要我」，

@@ -99,6 +99,72 @@ static void test_ask_gone_and_error(void)
     assert(strcmp(message.message, "no such pending request") == 0);
 }
 
+// 放不下的选项要**留一行说真话**：7 项时只上屏 4 项，总数记成 7——多出来的那一行
+// 是「还有 3 项在电脑上」，而看不见的选项等于不存在。
+static void test_option_overflow_reserves_a_row(void)
+{
+    static const char line[] =
+        "{\"t\":\"ask\",\"seq\":6,\"ref\":6,\"kind\":\"permission\",\"title\":\"Bash 确认\","
+        "\"options\":["
+        "{\"label\":\"一\",\"value\":\"a\"},{\"label\":\"二\",\"value\":\"b\"},"
+        "{\"label\":\"三\",\"value\":\"c\"},{\"label\":\"四\",\"value\":\"d\"},"
+        "{\"label\":\"五\",\"value\":\"e\"},{\"label\":\"六\",\"value\":\"f\"},"
+        "{\"label\":\"七\",\"value\":\"g\"}]}";
+
+    assert(parse(line));
+    assert(message.kind == BADGE_MSG_ASK);
+    assert(message.options_total == 7U);
+    assert(message.option_count == BADGE_MAX_OPTIONS - 1U); // 留一行给那句提示
+    assert(strcmp(message.options[message.option_count - 1U].label, "四") == 0);
+}
+
+// 正好放得下就不该有那句话：提示行只在真有东西看不见时才占位。
+static void test_exact_option_fit_has_no_overflow(void)
+{
+    static const char line[] =
+        "{\"t\":\"ask\",\"seq\":6,\"ref\":6,\"kind\":\"permission\",\"title\":\"Bash 确认\","
+        "\"options\":["
+        "{\"label\":\"一\",\"value\":\"a\"},{\"label\":\"二\",\"value\":\"b\"},"
+        "{\"label\":\"三\",\"value\":\"c\"},{\"label\":\"四\",\"value\":\"d\"},"
+        "{\"label\":\"五\",\"value\":\"e\"}]}";
+
+    assert(parse(line));
+    assert(message.options_total == BADGE_MAX_OPTIONS);
+    assert(message.option_count == BADGE_MAX_OPTIONS);
+}
+
+// 会话也一样：主机报了几个就记几个，底栏才不会少报「另有 N 个会话在跑」。
+static void test_session_overflow_is_counted(void)
+{
+    static const char line[] =
+        "{\"t\":\"state\",\"seq\":5,\"sessions\":["
+        "{\"id\":\"s1\",\"title\":\"一\"},{\"id\":\"s2\",\"title\":\"二\"},"
+        "{\"id\":\"s3\",\"title\":\"三\"},{\"id\":\"s4\",\"title\":\"四\"},"
+        "{\"id\":\"s5\",\"title\":\"五\"},{\"id\":\"s6\",\"title\":\"六\"}]}";
+
+    assert(parse(line));
+    assert(message.session_count == BADGE_MAX_SESSIONS);
+    assert(message.sessions_total == 6U);
+}
+
+// 题数超出上限、或者某道题的题面长到装不下，都算「没上屏」——两种对用户是同一件事，
+// 而 device 必须能说出少了几个（见 badge_state 的 disclose_dropped_questions）。
+static void test_question_overflow_is_counted(void)
+{
+    static const char line[] =
+        "{\"t\":\"ask\",\"seq\":7,\"ref\":7,\"kind\":\"ask_user\",\"title\":\"方向\","
+        "\"questions\":["
+        "{\"header\":\"一\",\"question\":\"第一题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"二\",\"question\":\"第二题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"三\",\"question\":\"第三题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"四\",\"question\":\"第四题？\",\"options\":[{\"label\":\"A\"}]},"
+        "{\"header\":\"五\",\"question\":\"第五题？\",\"options\":[{\"label\":\"A\"}]}]}";
+
+    assert(parse(line));
+    assert(message.questions_total == 5U);
+    assert(message.question_count == BADGE_MAX_QUESTIONS);
+}
+
 // 主机换了 ref 空间时必须能被解析出来：这条消息没有 ref、没有正文，唯一的作用是
 // 让设备丢掉手里的旧等待项。它不该被当成坏消息丢掉。
 static void test_reset(void)
@@ -148,7 +214,13 @@ static void test_question_without_options_is_kept(void)
 
 // 题面是回传答案的键：装不下就丢掉这道题，让用户在电脑上回答。
 // 半道题比没有题更坏——模型会收到一个它不认识的答案。
-static void test_oversized_question_is_dropped(void)
+// 题面长到装不下：这道题显示不了（题面是回传答案的键，截断了模型会收到一个它不认识
+// 的答案），但**这条 ask 仍然要收下**——主机正等一个答案，而屏幕必须让「有人在等你」
+// 看得见。界面据此显示「这题要到电脑上答」。
+//
+// 这与「没有选项的自由输入题照样收下」是同一条理由：丢掉它等于把一次等待变成静默，
+// 而那与这块设备存在的理由正好相反。
+static void test_oversized_question_is_kept_but_undisplayable(void)
 {
     char line[2048];
     char filler[BADGE_QUESTION_MAX + 64U];
@@ -160,11 +232,15 @@ static void test_oversized_question_is_dropped(void)
     filler[sizeof(filler) - 1U] = '\0';
 
     (void)snprintf(line, sizeof(line),
-                   "{\"t\":\"ask\",\"seq\":1,\"ref\":1,\"kind\":\"ask_user\","
+                   "{\"t\":\"ask\",\"seq\":1,\"ref\":1,\"kind\":\"ask_user\",\"title\":\"长题面\","
                    "\"questions\":[{\"question\":\"%s\",\"options\":["
                    "{\"label\":\"A\",\"value\":\"A\"}]}]}",
                    filler);
-    assert(!parse(line));
+    assert(parse(line));
+    assert(message.kind == BADGE_MSG_ASK);
+    assert(message.ask_kind == BADGE_ASK_QUESTIONS);
+    assert(message.questions_total == 1U); // 主机问了
+    assert(message.question_count == 0U);  // 一道都显示不了
 }
 
 // 未知类型、坏 JSON、非协议行：一律丢掉，且不留下半条解析结果。
@@ -275,10 +351,14 @@ int main(void)
     test_permission_ask();
     test_question_ask();
     test_ask_gone_and_error();
+    test_option_overflow_reserves_a_row();
+    test_exact_option_fit_has_no_overflow();
+    test_session_overflow_is_counted();
+    test_question_overflow_is_counted();
     test_reset();
     test_ask_without_ref_is_dropped();
     test_question_without_options_is_kept();
-    test_oversized_question_is_dropped();
+    test_oversized_question_is_kept_but_undisplayable();
     test_unknown_and_garbage();
     test_encoding();
     test_question_answer_round_trip();
