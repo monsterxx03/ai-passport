@@ -366,7 +366,7 @@ static void handle_voice_key(void)
     }
 }
 
-// 状态屏上的长按确定 = 忘记配对的电脑。
+// 状态屏上的**长按上** = 忘记配对的电脑（长按确定让位给了「说话」，见 handle_key）。
 //
 // 为什么要按两次：这是个不可逆的动作，而且它**只做了一半**——本机忘掉之后，电脑
 // 那边还留着它那一份 bond，于是之后会「连上即断」而且不会重新配对（macOS 的实测
@@ -378,7 +378,7 @@ static void handle_forget(uint32_t now)
 {
     if (s_forget_deadline == 0U || now >= s_forget_deadline) {
         s_forget_deadline = now + BADGE_FORGET_CONFIRM_MS;
-        badge_state_notice(&s_state, "再长按一次确定：忘记电脑",
+        badge_state_notice(&s_state, "再长按一次上：忘记电脑",
                            BADGE_FORGET_CONFIRM_MS);
         return;
     }
