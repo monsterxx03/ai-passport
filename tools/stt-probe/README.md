@@ -26,18 +26,21 @@ TCC 把语音识别授权归因给 **responsible process**，裸 CLI 的 respons
 | **1** `round1_assets_and_locales.swift` | 有哪些语言可用、资产装没装、中英混说/双模块各是什么样 | `zh_CN`/`zh_TW` 预装、`en_US` 要下载；**双模块不融合**；`SpeechDetector` 只做 VAD 不判语种 |
 | **2** `round2_bias_and_dictation.swift` | 偏置词表能不能救回英文词、Dictation 味道的转写器是否更合适 | **偏置词表完全无效**（加与不加一字不差）；`DictationTranscriber` 更差 |
 | **3** `round3_controls_and_lossy.swift` | 对照实验：偏置到底有没有用；备选里有什么；ADPCM 往返 | **偏置无效**、备选只是尾部碎片 → 两条自动纠错路都堵死 |
-| **4** `round4_sample_rate_lossy.swift` | 8 kHz 和 ADPCM 4:1 会不会把识别率打下去 | **都不会** → 链路格式定成 8 kHz + IMA ADPCM = **4 KB/s** |
+| **4** `round4_sample_rate_lossy.swift` | 8 kHz 和 ADPCM 4:1 会不会把识别率打下去 | **ADPCM 不会**；**8 kHz 会**——长句上量不出差别，短句上结尾的英文词会整段塌成汉字（`push 到 main` → `通 sh man` / `通知到内`）。所以 16 kHz 是首选，8 kHz 只是带宽不够时的退路 |
 
 `adpcm_roundtrip.py` 是标准的 IMA ADPCM 编码→解码往返（4:1），第 3、4 轮都用它模拟
 设备→主机那条有损链路。**它的实现就是设备端 `badge_voice.c` 将来该做的事**——两边各写一遍
 是「协议两端各自实现」的代价，而这份 Python 是最好的参照。
 
-## 两个刻意的设计
+## 三个刻意的设计
 
 - **不用麦克风、不用人开口**：句子全部由 `say` 合成（Tingting / Samantha），再过 `afconvert`
   转成 16 kHz 单声道 Int16（和链路里要传的格式一致）。所以验证可以在没有人的时候跑。
 - **每轮自足**：各自 `say` 合成自己要用的音频，产物写在本目录（`*.wav` / `*.aiff` 不入库）。
   轮次之间没有依赖，单跑任何一轮都行。
+- **同一段音频的转写是逐次确定的**（第 4 轮每个变体跑 3 遍，输出逐字相同），所以「换一档更好/更差」
+  是真的差别，不是抖动。但换一档音频（比如 8 kHz 无损）就会出现抖动：同一句同一音频三次给出
+  `通 sh man` / `通 sman` / `通 shman`——**抖动本身就是那档质量不行的信号**。
 
 ## 这四轮**没有**证明的
 

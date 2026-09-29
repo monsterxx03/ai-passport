@@ -1,16 +1,46 @@
 === 第四轮：有损压缩 / 采样率 ===
 
 [lossy_long] 原句: 帮我看一下 desktop 那个 link 包里面的 ble 实现，我怀疑 read 返回之后没有检查连接状态，你把 go test 跑一下确认没有回归
-  16k 无损       [685ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
-  16k ADPCM 4:1  [208ms] → 帮我看一下 Destok那个领包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
-  8k  无损       [213ms] → 帮我看一下 Destok那个 Lin包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotest好一下确认没有回归。
-  8k  ADPCM 4:1  [203ms] → 帮我看一下 Destok那个面包里面的 pla实现 ，我怀疑 Rit返回之后没有检查连接状态 ，你把 Gotes好一下确认没有回归。
+  16k 无损       [883ms] #1 → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k 无损       [221ms] #2 → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k 无损       [221ms] #3 → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k ADPCM 4:1  [220ms] #1 → 帮我看一下 Destok那个领包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k ADPCM 4:1  [226ms] #2 → 帮我看一下 Destok那个领包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k ADPCM 4:1  [223ms] #3 → 帮我看一下 Destok那个领包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  8k  无损       [229ms] #1 → 帮我看一下 Destok那个 Lin包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotest好一下确认没有回归。
+  8k  无损       [238ms] #2 → 帮我看一下 Destok那个 Lin包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotest好一下确认没有回归。
+  8k  无损       [241ms] #3 → 帮我看一下 Destok那个 Lin包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotest好一下确认没有回归。
+  8k  ADPCM 4:1  [218ms] #1 → 帮我看一下 Destok那个面包里面的 pla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotes好一下确认没有回归。
+  8k  ADPCM 4:1  [212ms] #2 → 帮我看一下 Destok那个面包里面的 pla实现 ，我怀疑 Rit返回之后没有检查连接状态 ，你把 Gotes好一下确认没有回归。
+  8k  ADPCM 4:1  [210ms] #3 → 帮我看一下 Destok那个面包里面的 pla实现 ，我怀疑 Rit返回之后没有检查连接状态 ，你把 Gotes好一下确认没有回归。
 
 [lossy_tech] 原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
-  16k 无损       [145ms] → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
-  16k ADPCM 4:1  [144ms] → 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
-  8k  无损       [143ms] → 看一下 Bac的 RSSI和 Benterylevel还有连接间隔。
-  8k  ADPCM 4:1  [144ms] → 看一下单 RSSI和 Beterylevel还有连接间隔。
+  16k 无损       [147ms] #1 → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  16k 无损       [148ms] #2 → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  16k 无损       [153ms] #3 → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  16k ADPCM 4:1  [158ms] #1 → 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
+  16k ADPCM 4:1  [151ms] #2 → 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
+  16k ADPCM 4:1  [152ms] #3 → 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
+  8k  无损       [152ms] #1 → 看一下 Bac的 RSSI和 Benterylevel还有连接间隔。
+  8k  无损       [158ms] #2 → 看一下 Bac的 RSSI和 Benterylevel还有连接间隔。
+  8k  无损       [159ms] #3 → 看一下 Bac的 RSSI和 Benterylevel还有连接间隔。
+  8k  ADPCM 4:1  [146ms] #1 → 看一下单 RSSI和 Beterylevel还有连接间隔。
+  8k  ADPCM 4:1  [151ms] #2 → 看一下单 RSSI和 Beterylevel还有连接间隔。
+  8k  ADPCM 4:1  [152ms] #3 → 看一下单 RSSI和 Beterylevel还有连接间隔。
+
+[lossy_short] 原句: 把这个 commit revert 掉，然后 rerun 一下测试，最后 push 到 main
+  16k 无损       [157ms] #1 → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  16k 无损       [155ms] #2 → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  16k 无损       [164ms] #3 → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  16k ADPCM 4:1  [168ms] #1 → 把这个 commit rivert掉 ，然后 rerom一下测试最后 pushop main。
+  16k ADPCM 4:1  [170ms] #2 → 把这个 commit rivert掉 ，然后 rerom一下测试最后 pushop main。
+  16k ADPCM 4:1  [167ms] #3 → 把这个 commit rivert掉 ，然后 rerom一下测试最后 pushop main。
+  8k  无损       [156ms] #1 → 把这个 commit revert掉 ，然后 reron一下测试最后通 sh man。
+  8k  无损       [162ms] #2 → 把这个 commit revert掉 ，然后 reroun一下测试最后通 sman。
+  8k  无损       [164ms] #3 → 把这个 commit revert掉 ，然后 reroun一下测试最后通 shman。
+  8k  ADPCM 4:1  [158ms] #1 → 把这个 commit reverte掉 ，然后 rem一下测试最后通知到内。
+  8k  ADPCM 4:1  [151ms] #2 → 把这个 commit reverte掉 ，然后 rem一下测试最后通知到内。
+  8k  ADPCM 4:1  [151ms] #3 → 把这个 commit reverte掉 ，然后 rem一下测试最后通知到内。
 
 [alternatives] .transcriptionWithAlternatives 的备选里到底有什么
   主结果: 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。

@@ -86,7 +86,14 @@ func recognize(_ path: String, alts: Bool = false) async -> (String, [String], I
 let clips: [(String, String)] = [
     ("lossy_long", "帮我看一下 desktop 那个 link 包里面的 ble 实现，我怀疑 read 返回之后没有检查连接状态，你把 go test 跑一下确认没有回归"),
     ("lossy_tech", "看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔"),
+    // 短句 + 嵌入式英文：这一句是 8 kHz 的软肋暴露得最明显的地方——长句上量不出差别，
+    // 短句上英文词会整段被吞成汉字（见设计文档表 7）。
+    ("lossy_short", "把这个 commit revert 掉，然后 rerun 一下测试，最后 push 到 main"),
 ]
+
+// 每个变体跑几遍。转写不是逐次确定的（同一段音频两次的标点/词形会不同），所以
+// 单跑一遍分不清「8 kHz 真的更差」和「这次运气不好」。
+let repeats = 3
 
 @main
 struct Probe4 {
@@ -109,8 +116,10 @@ struct Probe4 {
                 guard FileManager.default.fileExists(atPath: path) else {
                     log("  \(label) 变体缺失: \(path)"); continue
                 }
-                let (out, _, ms) = await recognize(path)
-                log("  \(label) [\(ms)ms] → \(out)")
+                for round in 1...repeats {
+                    let (out, _, ms) = await recognize(path)
+                    log("  \(label) [\(ms)ms] #\(round) → \(out)")
+                }
             }
         }
 
