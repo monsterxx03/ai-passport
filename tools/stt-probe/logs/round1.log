@@ -1,0 +1,68 @@
+=== 语音识别探针 ===
+授权状态: 3 （3 = 已授权）
+  zh-CN: installed
+  en-US: installed
+已装资产的语言: en_SG, en_AU, en_US, en_IE, en_NZ, en_IN, en_CA, zh_CN, en_GB, zh_TW, en_ZA
+支持的语言数: 30
+
+[zh] 原句: 帮我把这个改动提交一下，顺便看看有没有测试没跑
+  资产状态(zh-CN): installed
+  正在安装识别资产…
+  用时 569 ms
+  zh-CN → 帮我把这个改动提交一下 ，顺便看看有没有测试没跑。
+  资产状态(en-US): installed
+  正在安装识别资产…
+  用时 304 ms
+  en-US → , , , , , , , , ,
+  资产状态(zh-CN+en-US): installed
+  正在安装识别资产…
+  用时 192 ms
+  zh-CN → 帮我把这个改动提交一下 ，顺便看看有没有测试没跑。
+  en-US → , , , , , , , ,
+
+[mixed] 原句: 把这个 commit revert 掉，然后 rerun 一下测试，最后 push 到 main
+  资产状态(zh-CN): installed
+  正在安装识别资产…
+  用时 171 ms
+  zh-CN → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  资产状态(en-US): installed
+  正在安装识别资产…
+  用时 213 ms
+  en-US → Magic, commit river, yang ho, rerong, yang, sushi, tui ho, tu, shao, main.
+  资产状态(zh-CN+en-US): installed
+  正在安装识别资产…
+  用时 253 ms
+  zh-CN → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop man。
+  en-US → Magic, commit river, yang ho, rerong, yang, sushi, tui ho, tu, shao, main.
+
+[en] 原句: please revert that commit and run the tests again before pushing
+  资产状态(zh-CN): installed
+  正在安装识别资产…
+  用时 146 ms
+  zh-CN → Plase rever thatomitenon thest again before puching
+  资产状态(en-US): installed
+  正在安装识别资产…
+  用时 121 ms
+  en-US → Please revert that commit and run the tests again before pushing.
+  资产状态(zh-CN+en-US): installed
+  正在安装识别资产…
+  用时 195 ms
+  zh-CN → Plase rever thatomitenon test again before puching
+  en-US → Please revert that commit and run the tests again before pushing.
+
+[tech] 原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
+  资产状态(zh-CN): installed
+  正在安装识别资产…
+  用时 148 ms
+  zh-CN → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  资产状态(en-US): installed
+  正在安装识别资产…
+  用时 167 ms
+  en-US → Hi Yisian, Ben, the R S S I, her battery level. Hi, you, family.
+  资产状态(zh-CN+en-US): installed
+  正在安装识别资产…
+  用时 214 ms
+  zh-CN → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  en-US → Hi, Yi Xiang, the R S S I, her battery level. Hi, you, family.
+
+=== 完 ===

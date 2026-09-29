@@ -1,0 +1,15 @@
+=== 第三轮：偏置 / 备选 / 有损压缩 ===
+
+[A] 原句: 打开 tachibadge 的 kubeconfig，把 rasterizer 那个 pod 重启一下
+  无偏置 [670ms] → 打开 Twecheack的 Qubecomefic butrestriser那个 part重启一下。
+  有偏置 [161ms] → 打开 Twecheack的 Qubecomefic butrestriser那个 part重启一下。
+
+[B] 原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
+  主结果 [154ms] → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  备选1: 看一下 Bec的 RSSI和
+
+[C] 原句: 帮我看一下 desktop 那个 link 包里面的 ble 实现，我怀疑 read 返回之后没有检查连接状态，你把 go test 跑一下确认没有回归
+  原始 16k PCM   [214ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  ADPCM 往返失败（本机 afconvert 不支持 ima4）
+
+=== 完 ===

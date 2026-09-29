@@ -1,0 +1,26 @@
+=== 第二轮：偏置词表 / Dictation 对比 ===
+zh-CN 可接受格式: 8000Hz/1ch/fmt=3, 16000Hz/1ch/fmt=3
+en-US 可接受格式: 8000Hz/1ch/fmt=3, 16000Hz/1ch/fmt=3
+
+[mixed] 原句: 把这个 commit revert 掉，然后 rerun 一下测试，最后 push 到 main
+  时长 5.9s
+  zh 无偏置 [618ms] → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  zh 有偏置 [165ms] → 把这个 commit revert掉 ，然后 reround一下测试最后 pushop mean。
+  en 有偏置 [312ms] → Magic, commit river, yang ho, rerong, yang, sushi, tui ho, tu, shao, main.
+  dict-zh    [703ms] → 把这个to meet river，然后re run一下测试最后show me
+
+[tech] 原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
+  时长 6.2s
+  zh 无偏置 [155ms] → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  zh 有偏置 [154ms] → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  en 有偏置 [183ms] → Hi Yisian, Ben, the R S S I, her battery level. Hi, you, family.
+  dict-zh    [475ms] → 看一下RSI和better level还有连接间隔
+
+[long] 原句: 帮我看一下 desktop 那个 link 包里面的 ble 实现，我怀疑 read 返回之后没有检查连接状态，你把 go test 跑一下确认没有回归，然后提交一个 commit 推到 main 分支
+  时长 14.5s
+  zh 无偏置 [262ms] → 帮我看一下 Destok那个 Lin包里面的 pla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。然后提交一个 commit推到 man分支
+  zh 有偏置 [277ms] → 帮我看一下 Destok那个 Lin包里面的 pla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。然后提交一个 commit推到 man分支
+  en 有偏置 [145ms] → 
+  dict-zh    [1159ms] → 帮我看一下那个link包里面的来实现，我怀疑返回之后没有检查连接状态，你把Cha跑一下确认没有回归，然后提交一个cm推到分支
+
+=== 完 ===

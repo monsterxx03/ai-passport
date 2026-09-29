@@ -1,0 +1,20 @@
+=== 第四轮：有损压缩 / 采样率 ===
+
+[lossy_long] 原句: 帮我看一下 desktop 那个 link 包里面的 ble 实现，我怀疑 read 返回之后没有检查连接状态，你把 go test 跑一下确认没有回归
+  16k 无损       [685ms] → 帮我看一下 Destok那个 Lin包里面的 fla实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  16k ADPCM 4:1  [208ms] → 帮我看一下 Destok那个领包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 gotest好一下确认没有回归。
+  8k  无损       [213ms] → 帮我看一下 Destok那个 Lin包里面的 plas实现 ，我怀疑 Rid返回之后没有检查连接状态 ，你把 Gotest好一下确认没有回归。
+  8k  ADPCM 4:1  [203ms] → 帮我看一下 Destok那个面包里面的 pla实现 ，我怀疑 Rit返回之后没有检查连接状态 ，你把 Gotes好一下确认没有回归。
+
+[lossy_tech] 原句: 看一下 badge 的 RSSI 和 battery level，还有 BLE 连接间隔
+  16k 无损       [145ms] → 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  16k ADPCM 4:1  [144ms] → 看一下 Bec的 RSSI和 Benterylevel还有连接间隔。
+  8k  无损       [143ms] → 看一下 Bac的 RSSI和 Benterylevel还有连接间隔。
+  8k  ADPCM 4:1  [144ms] → 看一下单 RSSI和 Beterylevel还有连接间隔。
+
+[alternatives] .transcriptionWithAlternatives 的备选里到底有什么
+  主结果: 看一下 Bec的 RSSI和 Bentrylevel还有什么连接间隔。
+  备选1: 隔。
+  备选2: 隔
+
+=== 完 ===
