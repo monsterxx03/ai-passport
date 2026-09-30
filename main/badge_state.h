@@ -16,22 +16,26 @@
 // 等我」；超出部分留在主机那边，等这里的处理完由主机重发。
 #define BADGE_MAX_ASKS 4
 
-// 状态屏空闲时，底栏那两条提示（长按上 = 忘记电脑 / 按住确定 = 说话）每隔这么久换一条。
+// 状态屏空闲时，底栏那几条提示（长按上 = 忘记电脑 / 按住确定 = 说话 / 上下 = 翻页 /
+// 双击确定 = 切到电脑）每隔这么久换一条。
 //
-// 为什么要轮换：底栏一行只放得下 220px ≈ 13 个汉字，而两条合起来 15 个；它们又都是
-// **隐藏手势**——不写在屏幕上没人猜得到有这两个动作。相位由内部时钟推出来（不占字段，
-// 见 badge_state_hint_phase），所以这里是唯一要改的节拍。
+// 为什么要轮换：底栏一行只放得下 220px ≈ 13 个汉字，而四条合起来远不止；它们又都是
+// **隐藏手势**——不写在屏幕上没人猜得到有这四个动作。相位由内部时钟推出来（不占字段，
+// 见 badge_state_hint_phase），条数是 badge_ui.h 的 BADGE_HINT_COUNT（那一份和文案放在一起）。
+//
+// 四条一轮 16 秒：翻页与切前台是随时想用就用的动作，而「忘记电脑」一年里用不上一次，
+// 所以节拍是「都要能看见」，不是「按重要程度排序」。
 #define BADGE_HINT_ROTATE_MS 4000U
 
 typedef enum {
-    BADGE_KEY_UP = 0, // 短按上/下：在选项间移动
+    BADGE_KEY_UP = 0, // 短按上/下：待答屏上是「在选项间移动」，状态屏上报给主机（电脑上那个窗口翻半屏）
     BADGE_KEY_DOWN,
     BADGE_KEY_PREV,   // 长按上：上一题（第一题上无动作）
     BADGE_KEY_NEXT,   // 长按下：下一题（最后一题上无动作）
     BADGE_KEY_OK,     // 短按确定：单选=选中并前进；多选=勾选/取消勾选
     BADGE_KEY_SUBMIT, // 长按确定：提交。换题走 PREV/NEXT，这样一套手势对两种题型都成立
                       // （待答屏专用：状态屏上的确定键现在是「按住说话」，见 TALK_*）
-    BADGE_KEY_HUD_SHOW, // 双击确定：把桌面上的小窗叫出来（内容由主机给，设备不看它）
+    BADGE_KEY_ACTIVATE, // 双击确定：把电脑上那个窗口换到前台（设备不知道它长什么样）
     BADGE_KEY_TALK_START, // 按住确定（按下那一下）：开始录
     BADGE_KEY_TALK_END,   // 松开确定（抬起那一下）：结束并发送
 } badge_key_t;
@@ -66,14 +70,6 @@ typedef struct {
     // 直接放声音，是因为「什么时候该响、响哪一种」是**状态**（主机发来的 alert 消息），
     // 而状态机是纯逻辑、能在主机上测。
     badge_alert_kind_t alert_pending;
-
-    // 桌面那块小窗（HUD）开着没有。由主机说（BADGE_MSG_HUD），设备只据它做两件事：
-    // 状态屏底栏写什么，以及短上/短下要不要发上去（见 main.c 的按键路由）。
-    //
-    // 刻意**没有**截止时间：它不是设备自己开的一屏，什么时候关由主机决定——主机那边窗口
-    // 真的没了才会发 open=false。设备这一侧自己超时收起会做出「屏幕上说关着、主机那边还
-    // 开着」这种两边不一致的状态。
-    bool hud_open;
 } badge_state_t;
 
 void badge_state_init(badge_state_t *state);
@@ -81,8 +77,8 @@ void badge_state_init(badge_state_t *state);
 // badge_state_tick 推进内部时钟并让过期提示消失。返回 true 表示状态变了（需要重绘）。
 bool badge_state_tick(badge_state_t *state, uint32_t elapsed_ms);
 
-// badge_state_hint_phase 回答「状态屏空闲时底栏该显示哪一条提示」：0 或 1，每
-// BADGE_HINT_ROTATE_MS 翻一次。
+// badge_state_hint_phase 回答「状态屏空闲时底栏该显示哪一条提示」：0..BADGE_HINT_COUNT-1，
+// 每 BADGE_HINT_ROTATE_MS 翻一条。
 //
 // 它是内部时钟的纯函数，不存字段：相位是时间的函数，存一份只多一个会失同步的地方
 // （而对它的推进必须发生在这里——渲染只在「变了」的时候发生，见 badge_state_tick）。
@@ -103,12 +99,6 @@ void badge_state_notice(badge_state_t *state, const char *text, uint32_t duratio
 // 没有别人来接替它——不撤的话它会一直挂到期限（那一下设的是 30 秒），屏幕上看起来像
 // 还在录音。
 void badge_state_clear_notice(badge_state_t *state);
-
-// badge_state_hud_open 回答「桌面上那块小窗现在开着吗」。
-//
-// 按键路由要问它（开着时上下/确定的意思变了），底栏提示也要问它。它只是主机发来的
-// 那份状态，设备不解释、也不自己超时（见 badge_state_t.hud_open 的注释）。
-bool badge_state_hud_open(const badge_state_t *state);
 
 // badge_state_key 处理一次按键。
 //

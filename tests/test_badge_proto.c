@@ -397,30 +397,10 @@ static void test_voice_text(void)
     assert(strlen(message.voice_text) < BADGE_VOICE_TEXT_MAX);
 }
 
-// 小窗（HUD）的状态：主机说它开着没有。设备只读这一个布尔量——小窗里写的是什么，
-// 这条链路上一个字节都不过来（见 badge_proto.h 的 BADGE_MSG_HUD）。
-static void test_hud_state(void)
-{
-    assert(parse("{\"t\":\"hud\",\"seq\":42,\"open\":true}"));
-    assert(message.kind == BADGE_MSG_HUD);
-    assert(message.hud_open);
-
-    assert(parse("{\"t\":\"hud\",\"seq\":43,\"open\":false}"));
-    assert(message.kind == BADGE_MSG_HUD);
-    assert(!message.hud_open);
-
-    // 缺 open 字段：按「关着」处理。那是更保守的默认——关着时上下键不发上去（主机无事
-    // 可做），屏幕上只是少了一句提示；反过来的话，屏幕上会写着「确定能关小窗」而其实
-    // 那边什么都没开。
-    assert(parse("{\"t\":\"hud\",\"seq\":44}"));
-    assert(message.kind == BADGE_MSG_HUD);
-    assert(!message.hud_open);
-}
-
 // 设备上报的按键手势：只有「你按了哪一下」，没有含义。
 static void test_key_report(void)
 {
-    static const char *const actions[] = {"up", "down", "ok", "ok_double"};
+    static const char *const actions[] = {"up", "down", "activate"};
     char line[64];
     size_t i;
 
@@ -432,7 +412,7 @@ static void test_key_report(void)
         assert(strcmp(line, expect) == 0);
     }
     // 装不下就整条作废（不留半条），和别的编码函数一个约定。
-    assert(badge_proto_key(line, 8U, "ok_double") == 0U);
+    assert(badge_proto_key(line, 8U, "activate") == 0U);
     // 没有动作就没有消息：调用方给 NULL 时不能编出一条空动作的行出来。
     assert(badge_proto_key(line, sizeof(line), NULL) == 0U);
 }
@@ -472,7 +452,6 @@ int main(void)
     test_question_answer_round_trip();
     test_encoding_refuses_a_partial_message();
     test_voice_text();
-    test_hud_state();
     test_key_report();
     test_alert_message();
     printf("test_badge_proto: OK\n");

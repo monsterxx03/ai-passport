@@ -39,18 +39,6 @@ static unsigned long take_ulong(const bjson_val_t *obj, const char *key)
     return number < 0L ? 0UL : (unsigned long)number;
 }
 
-// take_bool 取一个布尔字段。缺字段、或者字段不是布尔，都按 fallback 处理——bjson_bool
-// 自己就带这一层（见 badge_json.h）。
-static bool take_bool(const bjson_val_t *obj, const char *key, bool fallback)
-{
-    bjson_val_t value;
-
-    if (!bjson_obj_get(obj, key, &value)) {
-        return fallback;
-    }
-    return bjson_bool(&value, fallback);
-}
-
 static void take_options(const bjson_val_t *owner, badge_option_t *options, size_t *count,
                          size_t max, size_t *total)
 {
@@ -276,16 +264,6 @@ bool badge_proto_parse(const char *line, size_t length, badge_msg_t *out)
             return true;
         }
         return false;
-    }
-    if (strcmp(kind, "hud") == 0) {
-        // 桌面上那块置顶小窗的状态。设备只读它，不当它是内容——小窗里写的是什么，
-        // 这条链路上一个字节都不会过来（见 badge_proto.h 的 BADGE_MSG_HUD）。
-        //
-        // 缺 open 字段时按「关着」处理：老主机会跳过它，而「关着」是更保守的那个默认
-        // （关着时上下键不发上去，屏幕只是少了一句提示）。
-        out->kind = BADGE_MSG_HUD;
-        out->hud_open = take_bool(&root, "open", false);
-        return true;
     }
     if (strcmp(kind, "voice_text") == 0) {
         // 刚才那段语音转成了什么，以及它到哪了。设备只是**显示**它——和这条链路上别的

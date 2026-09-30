@@ -15,7 +15,9 @@
 //
 //   2：删掉 info / info_request（设备上那张会话账目屏没了），加上 hud（小窗状态）与
 //      key（设备的按键手势）。
-#define BADGE_PROTO_VERSION 2
+//   3：删掉 hud（电脑上那块置顶小窗没了），手势变成 up / down / activate——上下翻电脑上
+//      那个窗口的会话，双击确定把窗口换到前台。
+#define BADGE_PROTO_VERSION 3
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -71,7 +73,6 @@ typedef enum {
     BADGE_MSG_RESET,    // 主机换了新的 ref 空间（每条连接都会重新分配）
     BADGE_MSG_ALERT,    // 响一声：有事等你，或者一个回合跑完了
     BADGE_MSG_VOICE_TEXT, // 刚才那段语音转成了什么，以及它到哪了
-    BADGE_MSG_HUD,        // 小窗（桌面上那块置顶面板）此刻开没开
 } badge_msg_kind_t;
 
 
@@ -161,12 +162,6 @@ typedef struct {
     // BADGE_MSG_ALERT：放哪一段音频（BADGE_ALERT_NONE 表示这条消息不认识，忽略）
     badge_alert_kind_t alert_kind;
 
-    // BADGE_MSG_HUD：桌面上那块小窗（HUD）现在开着没有。
-    //
-    // 设备据它决定状态屏底栏写什么、以及短上/短下要不要发上去（见 main.c 的按键路由）。
-    // 它不知道小窗里是什么内容——那是主机的事，设备只负责把这几个键的意思说给主机听。
-    bool hud_open;
-
     // BADGE_MSG_VOICE_TEXT：转写出来的那一句，以及它到哪了。
     //
     // 这里**没有**存协议里的 id：一次只录一段，回执必然是给最近那次录音的（设备侧没有
@@ -197,12 +192,12 @@ size_t badge_proto_answer_questions(char *out, size_t cap, unsigned long ref,
                                     const char *const *keys, const char *const *values,
                                     size_t count);
 
-// badge_proto_key 上报一次按键手势（短上/短下/短按确定/双击确定）。
+// badge_proto_key 上报一次按键手势（短上/短下/双击确定）。
 //
-// 它是**手势**而不是动作：设备只说「你按了哪一下」，那意味着什么由主机决定（小窗开着时
-// 上下是翻页、确定是关掉；关着时双击是把它叫出来）。动作名留给设备去猜，两端的语义就
-// 各长一半，而「小窗」这个概念设备根本不知道。
+// 它是**手势**而不是动作：设备只说「你按了哪一下」，那意味着什么由主机决定（上下翻电脑上
+// 那个窗口的会话，双击确定把窗口换到前台）。动作名留给设备去猜，两端的语义就各长一半，而
+// 「窗口」这个概念设备根本不知道。
 //
-// 设备只有在**有意义**的时候才发：小窗关着时的短上/短下不发（主机那边无事可做），
-// 见 main.c 的按键路由。
+// 设备只有在**有意义**的时候才发：状态屏上的短上/短下与双击确定（见 main.c 的按键路由），
+// 待答屏上它们是答题的手势、一个字节都不该往这条链路上跑。
 size_t badge_proto_key(char *out, size_t cap, const char *key);

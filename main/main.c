@@ -179,10 +179,10 @@ static void on_key(bsp_btn_t button, bsp_btn_ev_t event, void *context)
         } else if (event == BSP_BTN_LONG) {
             queued.key = BADGE_KEY_SUBMIT;
         } else if (event == BSP_BTN_DOUBLE) {
-            // 双击确定：把桌面上的小窗叫出来（重看最近一条回复）。双击在三个键上都空着，
-            // 而「刚才它说了什么」正是人离开电脑之后最想知道的那件事——内容在电脑上，
-            // 屏幕上只给这一句：它开没开、以及那几个键现在干什么（见底栏提示）。
-            queued.key = BADGE_KEY_HUD_SHOW;
+            // 双击确定：把电脑上那个窗口换到前台。双击在三个键上都空着，而「它刚才说了
+            // 什么」正是人离开电脑之后最想知道的那件事——内容在电脑上，这里只负责把窗口
+            // 叫到眼前（见底栏提示）。
+            queued.key = BADGE_KEY_ACTIVATE;
         } else if (event == BSP_BTN_PRESS) {
             // 按住说话：**按下**和**松开**都要送进队列（见 handle_key 的 TALK 分支）。
             // 缺了任何一个，录着的那一段就没人收尾。
@@ -445,40 +445,31 @@ static void handle_key(const badge_key_event_t *event)
         return;
     }
 
-    // 桌面上那块小窗（HUD）的按键路由。
+    // 状态屏（没有待答项）上的三个手势：它们遥控的是**电脑上那个窗口**。
     //
-    // 它是一个**模式**：主机说小窗开着的时候，状态屏上这几个键的意思就变了。设备不知道小窗里
-    // 是什么、也不知道该翻多少——它只把「你按了哪一下」报上去（badge_proto_key），含义在主机
-    // 那边（desktop/badge.go 的 Key）。
+    // 设备不知道窗口在哪里、也不知道「翻一屏」是多大——它只把「你按了哪一下」报上去
+    // （badge_proto_key），含义在主机那边（desktop/remote.go 的 Key）。
     //
-    // 三条边界：
+    // 两条边界：
+    //   - 只在状态屏上做。有人在等你回答时，这几个键的意思是**回答**（短上/短下在选项间
+    //     移动、确定是提交，见 badge_state_key），不能因为电脑那边开着窗口就改掉。
     //   - 它排在「按住说话」和「录音中按上 = 丢弃这段」**之后**：那两件事横跨好几次按键，
-    //     中途不能被模式吞掉（按下的那一下先到 TALK_START，松开才轮到这里的 CLICK）。
-    //   - 只在主屏（没有待答项）上做：有人在等你回答时，那几个键的意义是**回答**，不能
-    //     因为电脑上碰巧开着一块面板就改掉。
-    //   - 关着时短上/短下**不发**：主机那边无事可做，发了只是白占这条链路的字节。
-    //     （双击仍然发：那是「叫出来」。）
+    //     中途不能被别的意思吞掉（按下的那一下先到 TALK_START，松开才轮到这里的 CLICK）。
     if (s_state.ask_count == 0U) {
-        const bool hud = badge_state_hud_open(&s_state);
         const char *action = NULL;
 
-        if (event->key == BADGE_KEY_HUD_SHOW) {
-            // 开着时再来一下 = 关掉（同一件事的另一个方向，按了不会有坏处）。
-            action = hud ? "ok" : "ok_double";
-        } else if (hud) {
-            switch (event->key) {
-            case BADGE_KEY_UP:
-                action = "up";
-                break;
-            case BADGE_KEY_DOWN:
-                action = "down";
-                break;
-            case BADGE_KEY_OK:
-                action = "ok";
-                break;
-            default:
-                break;
-            }
+        switch (event->key) {
+        case BADGE_KEY_UP:
+            action = "up";
+            break;
+        case BADGE_KEY_DOWN:
+            action = "down";
+            break;
+        case BADGE_KEY_ACTIVATE:
+            action = "activate";
+            break;
+        default:
+            break;
         }
         if (action != NULL) {
             char line[32];
